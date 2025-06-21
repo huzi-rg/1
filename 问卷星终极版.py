@@ -96,20 +96,6 @@ DEFAULT_CONFIG = {
         "6": [0.2, 0.3, 0.5],  # 每行选项的选择概率
         "7": -1  # -1表示随机选择
     },
-    "branch_rules": {
-        # 例：第5题，选“是”进入branch_yes，选“否”进入branch_no
-        "5": {"是": "branch_yes", "否": "branch_no"}
-    },
-    "branches": {
-        "branch_yes": {
-            # 这里配置“是”分支后续页面的所有题型设置（结构同主配置）
-        },
-        "branch_no": {
-            # 这里配置“否”分支后续页面的所有题型设置
-        }
-    },
-
-
 
     # 量表题概率配置
     "scale_prob": {
@@ -122,6 +108,49 @@ DEFAULT_CONFIG = {
         "10": ["示例答案1", "示例答案2", "示例答案3"],
         "11": ["回答A", "回答B", "回答C"]
     },
+
+
+    "branch_questions": {
+        "branch1": {
+            "trigger_question": 5,
+            "trigger_option": "是",
+            "questions": {
+                "6": "分支1的题目1",
+                "7": "分支1的题目2"
+            },
+            "options": {
+                "6": ["选项A", "选项B"],
+                "7": ["选项C", "选项D"]
+            },
+            "single_prob": {
+                "6": -1,
+                "7": 1
+            },
+            "multiple_prob": {
+                "7": [1, 2]
+            }
+        },
+        "branch2": {
+            "trigger_question": 5,
+            "trigger_option": "否",
+            "questions": {
+                "8": "分支2的题目1",
+                "9": "分支2的题目2"
+            },
+            "options": {
+                "8": ["选项E", "选项F"],
+                "9": ["选项G", "选项H"]
+            },
+            "single_prob": {
+                "8": 2,
+                "9": -1
+            },
+            "multiple_prob": {
+                "9": [3, 4]
+            }
+        }
+    },
+
 
     # 多项填空配置
     "multiple_texts": {
@@ -278,7 +307,7 @@ class WJXAutoFillApp:
         self.style.configure('Warning.TLabel', foreground='orange')
         self.style.configure('Error.TLabel', foreground='red')
         self.style.configure('Accent.TButton', background='#4a90e2', foreground='white')
-
+        self.branch_frames = {}  # 存储分支配置的frame
         self.config = DEFAULT_CONFIG.copy()
         self.running = False
         self.paused = False
@@ -418,11 +447,8 @@ class WJXAutoFillApp:
         self.ai_chat_tab = AIChatTab(
             self.notebook,
             api_key_getter=lambda: (
-                self.openai_api_key_entry.get().strip() if self.ai_service.get() == "OpenAI"
-                else self.qingyan_api_key_entry.get().strip()
-            ),
-            api_service_getter=lambda: self.ai_service.get(),
-            app_ref=self
+                self.openai_api_key_entry.get().strip() if self.ai_service.get() == "OpenAI" else self.qingyan_api_key_entry.get().strip()),
+            api_service_getter=lambda: self.ai_service.get()
         )
         self.notebook.add(self.ai_chat_tab, text="💬 AI问卷助手")
         # 创建日志区域
@@ -704,26 +730,24 @@ class WJXAutoFillApp:
         self.ai_service.set(self.config.get("ai_service", "质谱清言"))
 
         # 第6行：质谱清言API Key
-        # 使用正确的变量名 - 删除_label后缀
-        self.qingyan_api_key_label = ttk.Label(advanced_frame, text="质谱清言 API Key:")  # 添加此行
+        self.qingyan_api_key_label = ttk.Label(advanced_frame, text="质谱清言 API Key:")
         self.qingyan_api_key_label.grid(row=6, column=0, padx=padx, pady=pady, sticky=tk.W)
         self.qingyan_api_key_entry = ttk.Entry(advanced_frame, width=40)
         self.qingyan_api_key_entry.grid(row=6, column=1, columnspan=2, padx=padx, pady=pady, sticky=tk.EW)
 
         # 获取API Key链接（放在质谱清言行）
-        self.api_link = ttk.Label(advanced_frame, text="获取API Key", foreground="blue", cursor="hand2")  # 添加此行
+        self.api_link = ttk.Label(advanced_frame, text="获取API Key", foreground="blue", cursor="hand2")
         self.api_link.grid(row=6, column=3, padx=5, pady=pady)
         self.api_link.bind("<Button-1>", lambda e: webbrowser.open("https://open.bigmodel.cn/usercenter/apikeys"))
 
         # 第7行：OpenAI API Key
-        # 使用正确的变量名 - 删除_label后缀
-        self.openai_api_key_label = ttk.Label(advanced_frame, text="OpenAI API Key:")  # 添加此行
+        self.openai_api_key_label = ttk.Label(advanced_frame, text="OpenAI API Key:")
         self.openai_api_key_label.grid(row=7, column=0, padx=padx, pady=pady, sticky=tk.W)
         self.openai_api_key_entry = ttk.Entry(advanced_frame, width=40)
         self.openai_api_key_entry.grid(row=7, column=1, columnspan=2, padx=padx, pady=pady, sticky=tk.EW)
 
         # 第8行：AI答题Prompt模板
-        self.ai_prompt_label = ttk.Label(advanced_frame, text="AI答题Prompt模板:")  # 添加此行
+        self.ai_prompt_label = ttk.Label(advanced_frame, text="AI答题Prompt模板:")
         self.ai_prompt_label.grid(row=8, column=0, padx=padx, pady=pady, sticky=tk.W)
         self.ai_prompt_var = tk.StringVar()
         self.ai_prompt_combobox = ttk.Combobox(
@@ -735,7 +759,7 @@ class WJXAutoFillApp:
         self.ai_prompt_combobox.set(self.config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}"))
 
         # 重新生成Prompt按钮
-        self.refresh_prompt_btn = ttk.Button(  # 添加此行
+        self.refresh_prompt_btn = ttk.Button(
             advanced_frame, text="重新生成Prompt(质谱清言)",
             command=self.on_refresh_qingyan_prompts
         )
@@ -755,8 +779,52 @@ class WJXAutoFillApp:
 
         # 添加AI服务切换事件绑定
         self.ai_service.bind("<<ComboboxSelected>>", self.on_ai_service_change)
+
+        # 添加分支管理区域
+        branch_frame = ttk.LabelFrame(scrollable_frame, text="分叉路径配置")
+        branch_frame.grid(row=6, column=0, columnspan=2, padx=padx, pady=pady, sticky=tk.EW)
+
+        # 分支管理按钮
+        btn_frame = ttk.Frame(branch_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Button(btn_frame, text="添加分支路径", command=self.add_branch_path).pack(side=tk.LEFT, padx=5)
+        self.branch_combobox = ttk.Combobox(btn_frame, state="readonly", width=20)
+        self.branch_combobox.pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="编辑分支", command=self.edit_branch).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="删除分支", command=self.delete_branch).pack(side=tk.LEFT, padx=5)
+
+        # 分支预览区域
+        self.branch_preview_frame = ttk.Frame(branch_frame)
+        self.branch_preview_frame.pack(fill=tk.X, pady=5)
+
+        # 分支预览初始文本
+        preview_label = ttk.Label(self.branch_preview_frame, text="请选择分支查看详情", font=("Arial", 9, "italic"))
+        preview_label.pack(pady=10)
+
+        # 更新分支列表
+        self.update_branch_combobox()
+
+        # 添加分支选择事件
+        self.branch_combobox.bind("<<ComboboxSelected>>",
+                                  lambda e: self.update_branch_preview(self.branch_combobox.get()))
+
+        # 如果有分支，默认选择第一个并更新预览
+        if self.branch_combobox['values']:
+            self.branch_combobox.current(0)
+            self.update_branch_preview(self.branch_combobox.get())
+
         # 初始化UI状态
         self.on_ai_service_change()
+
+        # 添加分支操作提示
+        tip_label = ttk.Label(branch_frame, text="提示: 分支路径在问卷解析过程中自动检测", font=("Arial", 9, "italic"),
+                              foreground="gray")
+        tip_label.pack(side=tk.BOTTOM, pady=(5, 0))
+
+        # 添加底部空白，确保所有内容都能显示
+        spacer_frame = ttk.Frame(scrollable_frame)
+        spacer_frame.grid(row=7, column=0, columnspan=2, pady=10)
 
     def on_ai_service_change(self, event=None):
         """动态显示/隐藏API Key输入框 - 修复版"""
@@ -1350,44 +1418,9 @@ class WJXAutoFillApp:
 
         return False
 
-    def create_question_settings(self, config=None):
-        """
-        创建题型设置界面
-        支持主流程和分支配置（config参数决定当前操作的是哪个配置对象）
-        """
-        import tkinter as tk
-        from tkinter import ttk
-
-        # 1. 选择当前使用的配置（主流程或某分支）
-        if config is None:
-            config = self.config  # 默认主配置
-
-        # 2. 清空原有内容（如果多次调用）
-        for widget in self.question_frame.winfo_children():
-            widget.destroy()
-
-        # 3. 分支切换区（主流程/分支）
-        switch_frame = ttk.Frame(self.question_frame)
-        switch_frame.pack(fill=tk.X, pady=5)
-        branch_options = ["主流程"] + list(self.config.get("branches", {}).keys())
-        if not hasattr(self, "branch_var"):
-            self.branch_var = tk.StringVar(value="主流程")
-        branch_menu = ttk.Combobox(switch_frame, values=branch_options, textvariable=self.branch_var, state="readonly",
-                                   width=20)
-        ttk.Label(switch_frame, text="当前配置：").pack(side=tk.LEFT, padx=(8, 2))
-        branch_menu.pack(side=tk.LEFT, padx=5)
-
-        def on_branch_change(event=None):
-            # 切换分支，重建界面
-            b = self.branch_var.get()
-            if b == "主流程":
-                self.create_question_settings(self.config)
-            else:
-                self.create_question_settings(self.config["branches"][b])
-
-        branch_menu.bind("<<ComboboxSelected>>", on_branch_change)
-
-        # 4. 创建滚动框架
+    def create_question_settings(self):
+        """创建题型设置界面 - 推荐每次完整重建Canvas, Frame, Notebook等所有结构"""
+        # 创建滚动框架
         self.question_canvas = tk.Canvas(self.question_frame)
         self.question_scrollbar = ttk.Scrollbar(self.question_frame, orient="vertical",
                                                 command=self.question_canvas.yview)
@@ -1400,13 +1433,13 @@ class WJXAutoFillApp:
         self.question_canvas.configure(yscrollcommand=self.question_scrollbar.set)
         self.question_scrollbar.pack(side="right", fill="y")
         self.question_canvas.pack(side="left", fill="both", expand=True)
-        self.bind_mousewheel_to_scrollbar(self.question_canvas)
+        self.bind_mousewheel_to_scrollbar(self.question_canvas)  # 添加这行绑定鼠标滚轮
 
-        # 5. 创建Notebook（每次都新建）
+        # 创建Notebook（每次都新建）
         self.question_notebook = ttk.Notebook(self.scrollable_question_frame)
         self.question_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # 6. 题型tab配置（必须用当前config参数）
+        # 题型tab配置
         question_types = [
             ('single_prob', "单选题", self.create_single_settings),
             ('multiple_prob', "多选题", self.create_multi_settings),
@@ -1418,7 +1451,7 @@ class WJXAutoFillApp:
             ('scale_prob', "量表题", self.create_scale_settings)
         ]
         for config_key, label_text, create_func in question_types:
-            count = len(config.get(config_key, {}))
+            count = len(self.config[config_key])
             frame = ttk.Frame(self.question_notebook)
             self.question_notebook.add(frame, text=f"{label_text}({count})")
             desc_frame = ttk.Frame(frame)
@@ -1427,14 +1460,16 @@ class WJXAutoFillApp:
                 ttk.Label(desc_frame, text=f"暂无{label_text}题目", font=("Arial", 10, "italic"),
                           foreground="gray").pack(pady=20)
             else:
-                # 7. 让所有create_xxx_settings方法支持config参数
-                create_func(frame, config=config)
+                create_func(frame)
 
-        # 8. 添加提示和手动修正按钮
+        # 添加提示和手动修正按钮
         tip_frame = ttk.Frame(self.scrollable_question_frame)
         tip_frame.pack(fill=tk.X, pady=10)
+
+        # 提示标签（保留）
         ttk.Label(tip_frame, text="提示: 鼠标悬停在题号上可查看题目内容",
                   style='Warning.TLabel').pack(side=tk.LEFT, padx=5)
+
 
         self.scrollable_question_frame.update_idletasks()
         self.question_canvas.configure(scrollregion=self.question_canvas.bbox("all"))
@@ -1637,9 +1672,7 @@ class WJXAutoFillApp:
         self.config["weixin_ratio"] = ratio
 
     def parse_survey(self):
-        """
-        解析问卷结构并生成配置模板 - 强化题型判别
-        """
+        """解析问卷结构并生成配置模板 - 包含分支路径检测"""
         if self.parsing:
             messagebox.showwarning("警告", "正在解析问卷，请稍候...")
             return
@@ -1649,21 +1682,19 @@ class WJXAutoFillApp:
         self.status_var.set("正在解析问卷...")
         self.status_indicator.config(foreground="orange")
 
-        threading.Thread(target=self._parse_survey_thread, daemon=True).start()
+        # 初始化分支配置
+        if "branch_questions" not in self.config:
+            self.config["branch_questions"] = {}
 
-    def _parse_survey_thread(self):
-        """
-        解析问卷结构并生成配置模板 - 题型判别加强版（更强量表题检测，结构/文本/内容多维度）
-        """
+        threading.Thread(target=self._parse_survey_thread_with_branches, daemon=True).start()
+
+    def _parse_survey_thread_with_branches(self):
+        """带分支路径检测的问卷解析线程"""
         driver = None
         try:
             url = self.url_entry.get().strip()
             if not url:
                 self.root.after(0, lambda: messagebox.showerror("错误", "请输入问卷链接"))
-                return
-
-            if not re.match(r'^https?://(www\.)?wjx\.cn/vm/[\w\d]+\.aspx(#)?$', url):
-                self.root.after(0, lambda: messagebox.showerror("错误", "问卷链接格式不正确"))
                 return
 
             options = webdriver.ChromeOptions()
@@ -1718,7 +1749,7 @@ class WJXAutoFillApp:
                     EC.presence_of_element_located((By.CSS_SELECTOR, ".div_question, .field, .question"))
                 )
 
-                # ----------- 增强量表题检测的JS核心 -----------
+                # ----------- 主问卷解析 -----------
                 questions_data = driver.execute_script("""
                     const getText = (element) => element ? element.textContent.trim() : '';
                     const questionSelectors = [
@@ -1944,15 +1975,18 @@ class WJXAutoFillApp:
                     });
                     return result;
                 """)
-                # ----------- END 增强量表题检测的JS核心 -----------
+                # ----------- END 主问卷解析 -----------
 
-                # 处理解析结果并自动生成Prompt
+                # 处理主问卷题目
                 self._process_parsed_questions(questions_data)
+
+                # 检测分支路径
+                self.detect_branch_paths(driver)
 
                 # 更新进度状态
                 self.root.after(0, lambda: self.question_progress_var.set(100))
                 self.root.after(0, lambda: self.question_status_var.set("解析完成"))
-                self.root.after(0, lambda: messagebox.showinfo("成功", "问卷解析成功！"))
+                self.root.after(0, lambda: messagebox.showinfo("成功", "问卷解析成功！包含分支路径"))
 
             except TimeoutException:
                 logging.error("问卷加载超时，请检查网络或链接。")
@@ -1975,6 +2009,284 @@ class WJXAutoFillApp:
             self.root.after(0, lambda: self.parse_btn.config(state=tk.NORMAL, text="解析问卷"))
             self.root.after(0, lambda: self.status_var.set("就绪"))
             self.root.after(0, lambda: self.status_indicator.config(foreground="green"))
+
+    def detect_branch_paths(self, driver):
+        """
+        检测问卷中的分支路径并添加到配置
+        增强：支持单选和多选分支，自动命名分支，避免重复
+        """
+        import time
+        from selenium.webdriver.common.by import By
+        from selenium.common.exceptions import StaleElementReferenceException
+
+        try:
+            # 查找所有可能的分叉题（单选题或多选题）
+            fork_questions = driver.find_elements(By.CSS_SELECTOR, ".div_question.ui-field-contain")
+            if not fork_questions:
+                fork_questions = driver.find_elements(By.CSS_SELECTOR, ".field, .question")
+
+            logging.info(f"检测到 {len(fork_questions)} 个可能的分叉题")
+
+            for q_idx, q in enumerate(fork_questions):
+                try:
+                    # 获取问题ID和文本
+                    qid = q.get_attribute("id") or f"q_{q_idx}"
+                    qid = qid.replace("div", "").replace("field", "").replace("question", "")
+                    if not qid:
+                        continue
+
+                    qtext = ""
+                    try:
+                        title_elem = q.find_element(By.CSS_SELECTOR,
+                                                    ".div_title_question, .question-title, .field-label")
+                        qtext = title_elem.text.strip()[:50]  # 取前50个字符
+                    except:
+                        pass
+
+                    logging.info(f"检查问题 {qid} 的分支路径: {qtext}")
+
+                    # 检查是否是单选或多选题
+                    radios = q.find_elements(By.CSS_SELECTOR, "input[type='radio']")
+                    checkboxes = q.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
+
+                    # 只处理有2-5个选项的题目
+                    option_elements = []
+                    if radios and 2 <= len(radios) <= 5:
+                        option_elements = radios
+                        q_type = "radio"
+                    elif checkboxes and 2 <= len(checkboxes) <= 5:
+                        option_elements = checkboxes
+                        q_type = "checkbox"
+                    else:
+                        continue
+
+                    # 获取选项文本
+                    option_texts = []
+                    for opt in option_elements:
+                        try:
+                            # 尝试获取关联的label文本
+                            label = driver.execute_script(
+                                "return arguments[0].nextElementSibling;", opt)
+                            if label:
+                                option_texts.append(label.text.strip())
+                            else:
+                                option_texts.append(opt.get_attribute("value") or "选项")
+                        except:
+                            option_texts.append("选项")
+
+                    # 对每个选项进行测试
+                    for opt_idx, (opt, opt_text) in enumerate(zip(option_elements, option_texts)):
+                        try:
+                            # 点击前保存当前页面状态
+                            original_url = driver.current_url
+                            original_page_source = driver.page_source[:1000]  # 保存部分用于比较
+
+                            # 滚动到选项并点击
+                            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                                  opt)
+                            opt.click()
+                            time.sleep(1.5)  # 等待页面反应
+
+                            # 检查是否跳转
+                            if driver.current_url != original_url:
+                                logging.info(f"选项 {opt_text} 导致页面跳转，可能是分支路径")
+
+                                # 解析新页面的题目
+                                branch_questions = self._parse_current_page(driver)
+
+                                if branch_questions:
+                                    # 创建分支配置名称
+                                    branch_name = f"分支_{qid}_{opt_idx + 1}"
+                                    counter = 1
+                                    while branch_name in self.config["branch_questions"]:
+                                        branch_name = f"分支_{qid}_{opt_idx + 1}_{counter}"
+                                        counter += 1
+
+                                    # 初始化分支配置
+                                    self.config["branch_questions"][branch_name] = {
+                                        "trigger_question": qid,
+                                        "trigger_option": opt_text,
+                                        "questions": {},
+                                        "options": {},
+                                        "single_prob": {},
+                                        "multiple_prob": {},
+                                        "texts": {},
+                                        "multiple_texts": {},
+                                        "matrix_prob": {},
+                                        "reorder_prob": {},
+                                        "droplist_prob": {},
+                                        "scale_prob": {}
+                                    }
+
+                                    # 添加题目到分支配置
+                                    for q_data in branch_questions:
+                                        qid = str(q_data["id"])
+                                        self.config["branch_questions"][branch_name]["questions"][qid] = q_data["text"]
+                                        self.config["branch_questions"][branch_name]["options"][qid] = q_data["options"]
+
+                                        # 根据题型初始化配置
+                                        q_type = q_data.get("type", "1")
+                                        if q_type == '3':  # 单选题
+                                            self.config["branch_questions"][branch_name]["single_prob"][qid] = -1
+                                        elif q_type == '4':  # 多选题
+                                            option_count = len(q_data["options"])
+                                            self.config["branch_questions"][branch_name]["multiple_prob"][qid] = {
+                                                "prob": [50] * option_count,
+                                                "min_selection": 1,
+                                                "max_selection": min(3, option_count)
+                                            }
+                                        elif q_type == '1':  # 填空题
+                                            self.config["branch_questions"][branch_name]["texts"][qid] = ["示例答案"]
+                                        elif q_type == '5':  # 量表题
+                                            option_count = len(q_data["options"])
+                                            self.config["branch_questions"][branch_name]["scale_prob"][qid] = [
+                                                                                                                  0.2] * option_count
+                                        elif q_type == '6':  # 矩阵题
+                                            self.config["branch_questions"][branch_name]["matrix_prob"][qid] = -1
+                                        elif q_type == '7':  # 下拉框
+                                            option_count = len(q_data["options"])
+                                            self.config["branch_questions"][branch_name]["droplist_prob"][qid] = [
+                                                                                                                     0.3] * option_count
+                                        elif q_type == '11':  # 排序题
+                                            option_count = len(q_data["options"])
+                                            self.config["branch_questions"][branch_name]["reorder_prob"][qid] = [
+                                                                                                                    0.25] * option_count
+                                        elif q_type == '2':  # 多项填空
+                                            option_count = q_data.get("空数", 1)
+                                            self.config["branch_questions"][branch_name]["multiple_texts"][qid] = [[
+                                                                                                                       "示例答案"]] * option_count
+
+                                    logging.info(
+                                        f"添加分支路径: {branch_name} (触发问题: {qid}, 选项: {opt_text}), 包含 {len(branch_questions)} 题")
+
+                                # 返回原页面
+                                driver.get(original_url)
+                                time.sleep(2)
+                                WebDriverWait(driver, 10).until(
+                                    EC.presence_of_element_located(
+                                        (By.CSS_SELECTOR, ".div_question, .field, .question"))
+                                )
+                            else:
+                                # 没有跳转，可能是动态加载
+                                # 检查是否有新内容出现
+                                new_questions = driver.find_elements(By.CSS_SELECTOR,
+                                                                     ".div_question, .field, .question")
+                                if len(new_questions) > len(fork_questions):
+                                    # 解析新出现的题目
+                                    new_q_data = []
+                                    for new_q in new_questions:
+                                        try:
+                                            # 跳过原始问题
+                                            if new_q.get_attribute("id") == q.get_attribute("id"):
+                                                continue
+
+                                            # 获取问题ID和文本
+                                            new_qid = new_q.get_attribute("id") or ""
+                                            new_qid = new_qid.replace("div", "").replace("field", "").replace(
+                                                "question", "")
+                                            if not new_qid:
+                                                continue
+
+                                            new_title = ""
+                                            try:
+                                                title_elem = new_q.find_element(By.CSS_SELECTOR,
+                                                                                ".div_title_question, .question-title, .field-label")
+                                                new_title = title_elem.text.strip()
+                                            except:
+                                                pass
+
+                                            # 简单获取选项
+                                            new_options = []
+                                            try:
+                                                options = new_q.find_elements(By.CSS_SELECTOR,
+                                                                              ".ulradiocheck label, .wjx-option-label")
+                                                for opt in options:
+                                                    new_options.append(opt.text.strip())
+                                            except:
+                                                pass
+
+                                            new_q_data.append({
+                                                "id": new_qid,
+                                                "text": new_title,
+                                                "options": new_options
+                                            })
+                                        except:
+                                            pass
+
+                                    if new_q_data:
+                                        # 创建分支配置名称
+                                        branch_name = f"动态分支_{qid}_{opt_idx + 1}"
+                                        counter = 1
+                                        while branch_name in self.config["branch_questions"]:
+                                            branch_name = f"动态分支_{qid}_{opt_idx + 1}_{counter}"
+                                            counter += 1
+
+                                        # 初始化分支配置
+                                        self.config["branch_questions"][branch_name] = {
+                                            "trigger_question": qid,
+                                            "trigger_option": opt_text,
+                                            "questions": {},
+                                            "options": {},
+                                            "single_prob": {},
+                                            "multiple_prob": {},
+                                            "texts": {},
+                                            "multiple_texts": {},
+                                            "matrix_prob": {},
+                                            "reorder_prob": {},
+                                            "droplist_prob": {},
+                                            "scale_prob": {}
+                                        }
+
+                                        # 添加题目到分支配置
+                                        for q_data in new_q_data:
+                                            qid = str(q_data["id"])
+                                            self.config["branch_questions"][branch_name]["questions"][qid] = q_data[
+                                                "text"]
+                                            self.config["branch_questions"][branch_name]["options"][qid] = q_data[
+                                                "options"]
+
+                                            # 根据题型初始化配置（简版）
+                                            if len(q_data["options"]) > 0:
+                                                self.config["branch_questions"][branch_name]["single_prob"][qid] = -1
+                                            else:
+                                                self.config["branch_questions"][branch_name]["texts"][qid] = [
+                                                    "示例答案"]
+
+                                        logging.info(
+                                            f"添加动态分支路径: {branch_name} (触发问题: {qid}, 选项: {opt_text}), 包含 {len(new_q_data)} 题")
+
+                                # 取消选择以测试下一个选项
+                                try:
+                                    opt.click()  # 取消选择
+                                    time.sleep(0.5)
+                                except:
+                                    pass
+                        except StaleElementReferenceException:
+                            logging.warning("元素状态过期，刷新页面后继续")
+                            driver.refresh()
+                            time.sleep(2)
+                            break
+                        except Exception as e:
+                            logging.error(f"测试选项 {opt_text} 时出错: {str(e)}")
+                            try:
+                                # 尝试恢复原始状态
+                                driver.get(original_url)
+                                time.sleep(2)
+                                WebDriverWait(driver, 10).until(
+                                    EC.presence_of_element_located(
+                                        (By.CSS_SELECTOR, ".div_question, .field, .question"))
+                                )
+                            except:
+                                pass
+                except StaleElementReferenceException:
+                    logging.warning("问题元素状态过期，跳过该问题")
+                    continue
+                except Exception as e:
+                    logging.error(f"处理问题 {qid} 时出错: {str(e)}")
+
+            logging.info(f"分支路径检测完成，共发现 {len(self.config['branch_questions'])} 个分支路径")
+        except Exception as e:
+            logging.error(f"检测分支路径时出错: {str(e)}")
 
     def create_single_settings(self, frame):
         """单选题，横向紧凑排版，题目预览文本宽度适中，题目间隔适中"""
@@ -2296,67 +2608,41 @@ class WJXAutoFillApp:
             )
 
     def create_scale_settings(self, frame):
-        """创建量表题设置界面 - 修复刻度数量问题"""
         padx, pady = 4, 2
-        # 创建描述框架
         desc_frame = ttk.LabelFrame(frame, text="量表题配置说明")
         desc_frame.pack(fill=tk.X, padx=padx, pady=pady)
         ttk.Label(desc_frame, text="• 概率越高，被选中的几率越大", font=("Arial", 9)).pack(anchor=tk.W)
-
-        # 创建表格框架
         table_frame = ttk.Frame(frame)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-
-        # 表头
         headers = ["题号", "题目预览", "刻度概率配置及操作"]
         for col, header in enumerate(headers):
-            ttk.Label(table_frame, text=header, font=("Arial", 9, "bold")).grid(
-                row=0, column=col, padx=padx, pady=pady, sticky=tk.W)
-
-        # 遍历所有量表题配置
+            ttk.Label(table_frame, text=header, font=("Arial", 9, "bold")).grid(row=0, column=col, padx=padx, pady=pady,
+                                                                                sticky=tk.W)
         for row_idx, (q_num, probs) in enumerate(self.config["scale_prob"].items(), start=1):
             base_row = row_idx * 2
             q_text = self.config["question_texts"].get(q_num, f"量表题 {q_num}")
-
-            # 关键修复：使用概率配置列表的长度作为刻度数量
-            option_count = len(probs) if probs else 0
-
-            # 题号标签
-            ttk.Label(table_frame, text=f"第{q_num}题", font=("Arial", 10)).grid(
-                row=base_row, column=0, padx=padx, pady=pady, sticky=tk.NW)
-
-            # 题目预览（带提示）
-            preview_text = q_text[:30] + "..." if len(q_text) > 30 else q_text
-            preview_label = ttk.Label(table_frame, text=preview_text, width=20, anchor="w", wraplength=300)
-            preview_label.grid(row=base_row, column=1, padx=padx, pady=pady, sticky=tk.NW)
-
-            # 添加题目提示
-            ToolTip(preview_label, f"完整题目: {q_text}", wraplength=400)
-
-            # 选项配置行
+            option_count = len(self.config["option_texts"].get(q_num, [])) or 1
+            ttk.Label(table_frame, text=f"第{q_num}题", font=("Arial", 10)).grid(row=base_row, column=0, padx=padx,
+                                                                                 pady=pady, sticky=tk.NW)
+            preview_text = q_text
+            ttk.Label(table_frame, text=preview_text, width=20, anchor="w", wraplength=300).grid(row=base_row, column=1,
+                                                                                                 padx=padx, pady=pady,
+                                                                                                 sticky=tk.NW)
             option_line = ttk.Frame(table_frame)
             option_line.grid(row=base_row, column=2, padx=padx, pady=pady, sticky=tk.W)
-
-            # 创建每个刻度的输入框
             entry_row = []
             for opt_idx in range(option_count):
                 ttk.Label(option_line, text=f"刻度{opt_idx + 1}:", width=5).pack(side=tk.LEFT, padx=(0, 2))
                 entry = ttk.Entry(option_line, width=6)
-                if opt_idx < len(probs):
+                if isinstance(probs, list) and opt_idx < len(probs):
                     entry.insert(0, str(probs[opt_idx]))
                 else:
-                    entry.insert(0, "0.2")  # 默认值
+                    entry.insert(0, "0.2")
                 entry.pack(side=tk.LEFT, padx=(0, 2))
                 entry_row.append(entry)
-
-            # 保存输入框引用
             self.scale_entries.append(entry_row)
-
-            # 按钮组
             btn_group = ttk.Frame(option_line)
             btn_group.pack(side=tk.LEFT, padx=(8, 0))
-
-            # 快捷操作按钮
             ttk.Button(btn_group, text="偏左", width=4,
                        command=lambda q=q_num, e=entry_row: self.set_question_bias("scale", "left", q, e)).pack(
                 side=tk.LEFT, padx=1)
@@ -2364,13 +2650,11 @@ class WJXAutoFillApp:
                        command=lambda q=q_num, e=entry_row: self.set_question_bias("scale", "right", q, e)).pack(
                 side=tk.LEFT, padx=1)
             ttk.Button(btn_group, text="随机", width=4,
-                       command=lambda q=q_num, e=entry_row: self.set_question_random("scale", q, e)).pack(
-                side=tk.LEFT, padx=1)
+                       command=lambda q=q_num, e=entry_row: self.set_question_random("scale", q, e)).pack(side=tk.LEFT,
+                                                                                                          padx=1)
             ttk.Button(btn_group, text="平均", width=4,
-                       command=lambda q=q_num, e=entry_row: self.set_question_average("scale", q, e)).pack(
-                side=tk.LEFT, padx=1)
-
-            # 分隔线
+                       command=lambda q=q_num, e=entry_row: self.set_question_average("scale", q, e)).pack(side=tk.LEFT,
+                                                                                                           padx=1)
             ttk.Separator(table_frame, orient='horizontal').grid(
                 row=base_row + 1, column=0, columnspan=3, sticky='ew', pady=10
             )
@@ -2414,44 +2698,7 @@ class WJXAutoFillApp:
                 row=base_row + 1, column=0, columnspan=3, sticky='ew', pady=10
             )
 
-    def create_multiple_text_settings(self, frame):
-        padx, pady = 4, 2
-        desc_frame = ttk.LabelFrame(frame, text="多项填空配置说明")
-        desc_frame.pack(fill=tk.X, padx=padx, pady=pady)
-        ttk.Label(desc_frame, text="• 每空答案用逗号分隔，自动随机选", font=("Arial", 9)).pack(anchor=tk.W)
-        table_frame = ttk.Frame(frame)
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-        headers = ["题号", "题目预览", "答案配置"]
-        for col, header in enumerate(headers):
-            ttk.Label(table_frame, text=header, font=("Arial", 9, "bold")).grid(row=0, column=col, padx=padx, pady=pady,
-                                                                                sticky=tk.W)
-        for row_idx, (q_num, answers_list) in enumerate(self.config["multiple_texts"].items(), start=1):
-            base_row = row_idx * 2
-            q_text = self.config["question_texts"].get(q_num, f"多项填空 {q_num}")
-            option_count = len(self.config["option_texts"].get(q_num, [])) or len(answers_list) or 1
-            ttk.Label(table_frame, text=f"第{q_num}题", font=("Arial", 10)).grid(row=base_row, column=0, padx=padx,
-                                                                                 pady=pady, sticky=tk.NW)
-            preview_text = q_text
-            ttk.Label(table_frame, text=preview_text, width=20, anchor="w", wraplength=300).grid(row=base_row, column=1,
-                                                                                                 padx=padx, pady=pady,
-                                                                                                 sticky=tk.NW)
-            answer_line = ttk.Frame(table_frame)
-            answer_line.grid(row=base_row, column=2, padx=padx, pady=pady, sticky=tk.W)
-            entry_row = []
-            for i in range(option_count):
-                entry = ttk.Entry(answer_line, width=14)
-                answer_str = ", ".join(answers_list[i]) if i < len(answers_list) else ""
-                entry.insert(0, answer_str)
-                entry.pack(side=tk.LEFT, padx=(0, 2))
-                entry_row.append(entry)
-            self.multiple_text_entries.append(entry_row)
-            reset_btn = ttk.Button(answer_line, text="重置", width=6,
-                                   command=lambda e=entry_row: [ent.delete(0, tk.END) or ent.insert(0, "示例答案") for
-                                                                ent in e])
-            reset_btn.pack(side=tk.LEFT, padx=(6, 0))
-            ttk.Separator(table_frame, orient='horizontal').grid(
-                row=base_row + 1, column=0, columnspan=3, sticky='ew', pady=10
-            )
+
 
     def auto_click_next_page(self, driver):
         """
@@ -3059,457 +3306,27 @@ class WJXAutoFillApp:
                 except:
                     pass
 
-    def fill_survey(self, driver):
-        """
-        支持分支跳转的问卷填写主流程。
-        根据分支点(如第5题)选择，自动切换到对应分支的题型配置，保证后续页面填写与页面结构一致。
-        """
-        import random
-        import time
-        import logging
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.common.exceptions import TimeoutException, WebDriverException
-
-        current_page = 1
-        max_pages = 20  # 设置最大页数限制
-        processed_signatures = set()  # 用于判重
-        already_in_branch = False
-        branch_name = None
-        branch_config = None
-        branch_rules = self.config.get("branch_rules", {})
-
-        def try_submit_on_no_question(driver):
-            """
-            当页面无题目时，尝试查找并点击提交按钮（兼容不同模板）
-            """
-            submit_selectors = [
-                "#submit_button", "#ctlNext", "input[value*='提交']", "a.submitbutton", "#btnSubmit",
-                ".submit-btn", ".submitbutton", ".btn-submit", ".btn-success",
-                "button[type='submit']", "input[type='submit']",
-                "div.submit", ".survey-submit", "button", "a"
-            ]
-            for sel in submit_selectors:
-                try:
-                    elements = driver.find_elements(By.CSS_SELECTOR, sel)
-                    for elem in elements:
-                        if elem.is_displayed():
-                            text = elem.text or elem.get_attribute("value") or ""
-                            if any(word in text for word in ["提交", "完成", "交卷", "确定", "submit"]):
-                                try:
-                                    elem.click()
-                                    time.sleep(1)
-                                    return True
-                                except Exception:
-                                    continue
-                except Exception:
-                    continue
-            return False
-
-        while current_page <= max_pages and self.running:
-            logging.info(f"正在处理第 {current_page} 页问卷")
-
-            # 等待题目加载
-            try:
-                WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".div_question, .field, .question"))
-                )
-            except TimeoutException:
-                logging.warning("页面加载超时，尝试刷新")
-                driver.refresh()
-                time.sleep(1)
-                continue
-            except WebDriverException as e:
-                logging.error(f"WebDriver异常: {e}")
-                break
-
-            # 获取当前页题目，只统计可见题
-            questions = [
-                q for q in driver.find_elements(
-                    By.CSS_SELECTOR,
-                    ".field.ui-field-contain, .div_question, .question, .survey-question"
-                )
-                if q.is_displayed()
-            ]
-            total_questions = len(questions)
-
-            # 用页面内容hash判重
-            cur_page_signature = "|".join([q.text.strip()[:30] for q in questions]) if questions else driver.current_url
-            if cur_page_signature in processed_signatures:
-                logging.warning("检测到重复页面，跳出循环避免死循环")
-                break
-            processed_signatures.add(cur_page_signature)
-
-            # 如果没有题目，优先尝试提交
-            if total_questions == 0:
-                logging.info("本页无可见题目，尝试提交或翻页")
-                if try_submit_on_no_question(driver):
-                    logging.info("无题目页已成功提交")
-                    return True
-                if self.auto_click_next_page(driver):
-                    current_page += 1
-                    continue
-                else:
-                    logging.warning("未检测到可见题目，也未发现可点击的下一页/继续按钮或提交按钮")
-                    break
-
-            # 计算本页答题时间
-            total_time = random.randint(self.config["min_duration"], self.config["max_duration"])
-            start_time = time.time()
-            avg_time_per_question = total_time / total_questions
-            remaining_time = total_time
-            already_filled = set()
-
-            # 填写本页所有题目
-            for i, q in enumerate(questions):
-                if not self.running:
-                    break
-
-                q_id = q.get_attribute("id") or f"q_{i}_{current_page}"
-                if q_id in already_filled:
-                    continue
-
-                current_question = i + 1
-                # 局部刷新题目进度条和状态文本
-                self.question_progress_var.set(int((current_question / total_questions) * 100))
-                self.question_status_var.set(f"第{current_page}页 题目:{current_question}/{total_questions}")
-
-                # 计算每题时间
-                if i == total_questions - 1:
-                    question_time = remaining_time
-                else:
-                    question_time = min(
-                        random.uniform(avg_time_per_question * 0.5, avg_time_per_question * 1.5),
-                        remaining_time - (total_questions - i - 1)
-                    )
-
-                question_start = time.time()
-
-                try:
-                    # 判断当前是否进入分支（只处理一次）
-                    q_num_for_branch = q_id.replace("div", "")
-                    # 只在分支点且尚未切换时处理
-                    if (not already_in_branch) and (q_num_for_branch in branch_rules):
-                        # 分支点题型必须是单选
-                        # 获取选项文本
-                        selected_option = self.fill_single(driver, q, q_num_for_branch, get_option_text=True)
-                        branch_name = branch_rules[q_num_for_branch].get(selected_option)
-                        if branch_name and "branches" in self.config and branch_name in self.config["branches"]:
-                            already_in_branch = True
-                            branch_config = self.config["branches"][branch_name]
-                            logging.info(
-                                f"分支跳转：第{q_num_for_branch}题选择『{selected_option}』，进入分支『{branch_name}』")
-                        # 也要加到already_filled
-                        already_filled.add(q_id)
-                        # 跳过后续通用填写
-                        continue
-
-                    # 当前填写用哪个配置
-                    this_config = branch_config if already_in_branch and branch_config else self.config
-
-                    # 判断题号
-                    q_type = q.get_attribute("type")
-                    q_num = q_id.replace("div", "") if q_id else str(current_question)
-
-                    # 主动填写（用分支/主配置）
-                    if q_type == "1" or q_type == "2":
-                        self.fill_text(driver, q, q_num, config=this_config)
-                    elif q_type == "3":
-                        self.fill_single(driver, q, q_num, config=this_config)
-                    elif q_type == "4":
-                        self.fill_multiple(driver, q, q_num, config=this_config)
-                    elif q_type == "5":
-                        self.fill_scale(driver, q, q_num, config=this_config)
-                    elif q_type == "6":
-                        self.fill_matrix(driver, q, q_num, config=this_config)
-                    elif q_type == "7":
-                        self.fill_droplist(driver, q, q_num, config=this_config)
-                    elif q_type == "11":
-                        self.fill_reorder(driver, q, q_num, config=this_config)
-                    else:
-                        self.auto_detect_question_type(driver, q, q_num, config=this_config)
-
-                    # 填写后检测
-                    if self.is_filled(q):
-                        already_filled.add(q_id)
-                    else:
-                        if q_type != "11":
-                            self.auto_detect_question_type(driver, q, q_num, config=this_config)
-                            if self.is_filled(q):
-                                already_filled.add(q_id)
-
-                    elapsed = time.time() - question_start
-                    if elapsed < question_time:
-                        time.sleep(question_time - elapsed)
-                    remaining_time -= time.time() - question_start
-
-                except WebDriverException as e:
-                    if 'no such window' in str(e).lower():
-                        logging.error("浏览器窗口已关闭或失效，停止本线程填充")
-                        return False
-                    logging.error(f"填写第{q_num}题时WebDriver出错: {str(e)}")
-                    break
-                except Exception as e:
-                    logging.error(f"填写第{q_num}题时出错: {str(e)}")
-                    continue
-
-            # 补填本页未填题目
-            questions2 = [
-                q for q in driver.find_elements(
-                    By.CSS_SELECTOR,
-                    ".field.ui-field-contain, .div_question, .question, .survey-question"
-                )
-                if q.is_displayed()
-            ]
-            for q in questions2:
-                q_id = q.get_attribute("id") or ""
-                if q_id in already_filled:
-                    continue
-
-                is_required = False
-                try:
-                    if q.find_element(By.CSS_SELECTOR, ".required, .star, .necessary, .wjxnecessary"):
-                        is_required = True
-                except:
-                    if "必答" in q.text or q.get_attribute("data-required") == "1":
-                        is_required = True
-
-                if not is_required and self.is_filled(q):
-                    continue
-
-                if not self.is_filled(q):
-                    q_num = q_id.replace("div", "") if q_id else ""
-                    try:
-                        # 用当前分支配置
-                        this_config = branch_config if already_in_branch and branch_config else self.config
-                        self.auto_detect_question_type(driver, q, q_num, config=this_config)
-                        if self.is_filled(q):
-                            already_filled.add(q_id)
-                    except WebDriverException as e:
-                        if 'no such window' in str(e).lower():
-                            logging.error("浏览器窗口已关闭或失效，停止本线程填充")
-                            return False
-                        logging.warning(f"补填题目{q_num}时WebDriver出错: {e}")
-                    except Exception as e:
-                        logging.warning(f"补填题目{q_num}时出错: {e}")
-
-            # 确保本页答题时间
-            elapsed_total = time.time() - start_time
-            if elapsed_total < total_time:
-                time.sleep(total_time - elapsed_total)
-
-            # 尝试点击下一页
-            if self.auto_click_next_page(driver):
-                current_page += 1
-                continue
-
-            # 如果没有下一页按钮，检查是否真的到最后一页
-            submit_button = driver.find_elements(By.CSS_SELECTOR,
-                                                 "#submit_button, #ctlNext, input[value*='提交'], a.submitbutton, #btnSubmit")
-            if not submit_button:
-                if try_submit_on_no_question(driver):
-                    logging.info("最后一页无题目已成功提交")
-                    return True
-                logging.warning("未找到提交按钮，可能不是最后一页，尝试刷新")
-                driver.refresh()
-                time.sleep(2)
-                continue
-
-            logging.info("没有下一页，准备提交问卷")
-            return self.submit_survey(driver)
-
-
-    def auto_detect_question_type(self, driver, question, q_num):
-        """
-        自动检测题型并填写 - 填空/多项填空统一用 fill_text(driver, question, q_num)
-        """
-        import random
-        import time
-        from selenium.webdriver.common.by import By
-
-        try:
-            sort_lis = question.find_elements(By.CSS_SELECTOR,
-                                              ".sort-ul li, .sortable li, .wjx-sortable li, .ui-sortable li, .sort-container li, ul.sort-ul > li, ul.sortable > li"
-                                              )
-            if sort_lis and len(sort_lis) >= 2:
-                self.fill_reorder(driver, question, q_num)
-                return
-
-            try:
-                title_elem = question.find_element(By.CSS_SELECTOR,
-                                                   ".div_title_question, .question-title, .field-label")
-                title_text = title_elem.text.strip()
-                if "排序" in title_text or "顺序" in title_text or "拖动" in title_text:
-                    self.fill_reorder(driver, question, q_num)
-                    return
-            except Exception:
-                pass
-
-            radio_btns = question.find_elements(By.CSS_SELECTOR, ".ui-radio, input[type='radio']")
-            if radio_btns:
-                self.fill_single(driver, question, q_num)
-                return
-
-            checkboxes = question.find_elements(By.CSS_SELECTOR, ".ui-checkbox, input[type='checkbox']")
-            if checkboxes:
-                self.fill_multiple(driver, question, q_num)
-                return
-
-            # 填空题/多项填空，span或input/textarea都统一调用fill_text(driver, question, q_num)
-            spans = question.find_elements(By.CSS_SELECTOR, "span.textCont[contenteditable='true']")
-            text_inputs = question.find_elements(By.CSS_SELECTOR, "input[type='text'], textarea")
-            if spans or (text_inputs and len(text_inputs) >= 1):
-                self.fill_text(driver, question, q_num)
-                return
-
-            scale_items = question.find_elements(By.CSS_SELECTOR, ".scale-ul li, .scale-item")
-            if scale_items:
-                self.fill_scale(driver, question, q_num)
-                return
-
-            matrix_rows = question.find_elements(By.CSS_SELECTOR, ".matrix tr, .matrix-row")
-            if matrix_rows:
-                self.fill_matrix(driver, question, q_num)
-                return
-
-            dropdowns = question.find_elements(By.CSS_SELECTOR, "select")
-            if dropdowns:
-                self.fill_droplist(driver, question, q_num)
-                return
-
-            clickable = question.find_elements(By.CSS_SELECTOR, "li, label, button")
-            for elem in clickable:
-                if elem.is_displayed() and elem.is_enabled():
-                    try:
-                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-                                              elem)
-                        elem.click()
-                        self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
-                        return
-                    except Exception:
-                        continue
-
-            text_inputs = question.find_elements(By.CSS_SELECTOR, "input, textarea")
-            for inp in text_inputs:
-                if inp.is_displayed() and not inp.get_attribute("value"):
-                    try:
-                        inp.send_keys("自动填写内容")
-                        self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
-                        return
-                    except Exception:
-                        continue
-
-            import logging
-            logging.warning(f"无法自动检测题目 {q_num} 的类型，尝试通用方法")
-        except Exception as e:
-            import logging
-            logging.error(f"自动检测题目类型时出错: {str(e)}")
-
-    def fill_text(self, driver, question, q_num, config=None):
-        """
-        填空题/多项填空题自动填写 - 优化日志版，支持分支配置（config参数）
-        """
-        import random
-        import time
-        import logging
-        from selenium.webdriver.common.by import By
-
-        if config is None:
-            config = self.config
-
-        q_key = str(q_num)
-        # 获取所有可填写的控件
-        editable_spans = question.find_elements(By.CSS_SELECTOR, "span.textCont[contenteditable='true']")
-        visible_inputs = [el for el in question.find_elements(By.CSS_SELECTOR, "input[type='text']") if
-                          el.is_displayed()]
-        visible_textareas = [el for el in question.find_elements(By.CSS_SELECTOR, "textarea") if el.is_displayed()]
-        all_fields = editable_spans + visible_inputs + visible_textareas
-        if not all_fields:
-            all_fields = [el for el in question.find_elements(By.CSS_SELECTOR, "input") if el.is_displayed()]
-
-        if not all_fields:
-            logging.debug(f"题目 {q_num} 未找到可填写的输入框")
+    def delete_branch(self):
+        """删除选中的分支配置"""
+        branch_name = self.branch_combobox.get()
+        if not branch_name:
+            messagebox.showinfo("提示", "请先选择一个分支")
             return
 
-        # ==== AI自动答题优先 ====
-        answers = []
-        ai_enabled = config.get("ai_fill_enabled", False)
-        api_key = config.get("openai_api_key", "")
-        prompt_template = config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}")
-        question_text = config.get("question_texts", {}).get(q_key, "")
+        # 确认删除
+        if not messagebox.askyesno("确认删除", f"确定要删除分支 '{branch_name}' 吗？"):
+            return
 
-        if ai_enabled and api_key and question_text:
-            try:
-                service = config.get("ai_service", "质谱清言")
-                if service == "OpenAI":
-                    # 使用OpenAI接口
-                    ai_answer = self.ai_generate_answer(question_text, api_key, prompt_template)
-                else:
-                    # 使用质谱清言接口
-                    ai_answer = self.zhipu_generate_answer(question_text, api_key, prompt_template)
-                answers = [ai_answer] * len(all_fields)
-                logging.info(f"使用{service}生成答案: {ai_answer[:20]}...")
-            except Exception as e:
-                logging.warning(f"AI答题失败: {str(e)}")
-                answers = [self.get_identity_answer("", question_text)] * len(all_fields)
+        # 从配置中删除分支
+        if branch_name in self.config["branch_questions"]:
+            del self.config["branch_questions"][branch_name]
+            logging.info(f"已删除分支: {branch_name}")
 
-        elif q_key in config.get("multiple_texts", {}):
-            ans_lists = config["multiple_texts"][q_key]
-            for i in range(len(all_fields)):
-                if i < len(ans_lists) and ans_lists[i]:
-                    chosen = random.choice(ans_lists[i])
-                    answers.append(chosen)
-                else:
-                    answers.append("自动填写内容")
-        elif q_key in config.get("texts", {}):
-            ans_list = config["texts"][q_key]
-            for i in range(len(all_fields)):
-                chosen = random.choice(ans_list) if ans_list else "自动填写内容"
-                answers.append(chosen)
-        else:
-            answers = ["自动填写内容"] * len(all_fields)
+        # 更新分支下拉框
+        self.update_branch_combobox()
 
-        # ==== 填写答案 ====
-        for idx, field in enumerate(all_fields):
-            val = (field.tag_name == "span" and field.text.strip()) or (field.get_attribute("value"))
-            if val:
-                continue  # 已有内容不覆盖
 
-            answer = answers[idx] if idx < len(answers) else "自动填写内容"
 
-            if field.tag_name == "span" and field.get_attribute("contenteditable") == "true":
-                try:
-                    driver.execute_script("arguments[0].innerText = '';", field)
-                    for ch in answer:
-                        field.send_keys(ch)
-                        time.sleep(random.uniform(0.01, 0.03))
-                except Exception:
-                    driver.execute_script("arguments[0].innerText = arguments[1];", field, answer)
-                try:
-                    driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
-                    driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
-                except Exception:
-                    pass
-            else:
-                try:
-                    field.clear()
-                except Exception:
-                    pass
-                try:
-                    for ch in answer:
-                        field.send_keys(ch)
-                        time.sleep(random.uniform(0.01, 0.03))
-                except Exception:
-                    driver.execute_script("arguments[0].value = arguments[1];", field, answer)
-                try:
-                    driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
-                    driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
-                except Exception:
-                    pass
-
-        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
-        logging.info(f"已填写题目 {q_num}")
 
     def repair_required_questions(self, driver):
         """
@@ -3942,291 +3759,7 @@ class WJXAutoFillApp:
         print("达到最大重试次数，提交失败")
         return False
 
-    def fill_droplist(self, driver, question, q_num, config=None):
-        """
-        增强版下拉框题目填写方法 - 支持原生select和自定义下拉框，支持分支配置
-        """
-        import random
-        import time
-        import logging
-        import datetime
-        import numpy as np
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import Select
-        from selenium.webdriver.common.action_chains import ActionChains
-        from selenium.common.exceptions import (NoSuchElementException,
-                                                ElementNotInteractableException,
-                                                StaleElementReferenceException)
 
-        if config is None:
-            config = self.config
-
-        logging.info(f"开始处理下拉框题目 {q_num}")
-        try:
-            q_key = str(q_num)
-            # 获取配置的概率
-            probs = config.get("droplist_prob", {}).get(q_key, None)
-
-            # 尝试定位原生select元素
-            try:
-                select_elem = question.find_element(By.CSS_SELECTOR, "select")
-                logging.info(f"找到原生select元素")
-
-                # 创建Select对象
-                select = Select(select_elem)
-                options = select.options
-
-                # 过滤无效选项
-                valid_options = []
-                for idx, op in enumerate(options):
-                    try:
-                        # 跳过禁用项和"请选择"选项
-                        if op.get_attribute("disabled") or op.text.strip() in ["请选择", "Select", "--请选择--"]:
-                            continue
-                        # 如果value为空但文本有效，也算有效选项
-                        if not op.get_attribute("value") and op.text.strip():
-                            valid_options.append((idx, op))
-                        elif op.get_attribute("value") and op.get_attribute("value").strip():
-                            valid_options.append((idx, op))
-                    except StaleElementReferenceException:
-                        continue
-
-                if not valid_options:
-                    logging.warning(f"题目 {q_num} 未找到有效下拉选项")
-                    return
-
-                logging.info(f"题目 {q_num} 有 {len(valid_options)} 个有效选项")
-
-                # 处理概率配置
-                if probs and isinstance(probs, list) and len(probs) == len(valid_options):
-                    try:
-                        weights = [float(p) for p in probs]
-                        total = sum(weights)
-                        if total > 0:
-                            weights = [w / total for w in weights]
-                            selected_idx = np.random.choice(range(len(valid_options)), p=weights)
-                            logging.info(f"使用概率选择: 索引 {selected_idx}")
-                        else:
-                            selected_idx = random.randint(0, len(valid_options) - 1)
-                            logging.info(f"概率总和为零，随机选择: 索引 {selected_idx}")
-                    except Exception as e:
-                        logging.warning(f"概率处理失败，使用随机选择: {str(e)}")
-                        selected_idx = random.randint(0, len(valid_options) - 1)
-                else:
-                    selected_idx = random.randint(0, len(valid_options) - 1)
-                    logging.info(f"无有效概率配置，随机选择: 索引 {selected_idx}")
-
-                # 获取选中的选项
-                idx, op = valid_options[selected_idx]
-                option_text = op.text.strip()
-                option_value = op.get_attribute("value") or option_text
-
-                # 使用Select类进行选择
-                try:
-                    logging.info(f"尝试通过索引选择: {idx}")
-                    select.select_by_index(idx)
-                    logging.info(f"选择选项: {option_text}")
-                except Exception as e:
-                    try:
-                        logging.info(f"索引选择失败，尝试按值选择: {option_value}")
-                        select.select_by_value(option_value)
-                    except:
-                        try:
-                            logging.info(f"值选择失败，尝试按文本选择: {option_text}")
-                            select.select_by_visible_text(option_text)
-                        except Exception as e2:
-                            logging.error(f"所有选择方式失败: {str(e2)}")
-                            # 使用JS直接设置值
-                            js = f"""
-                            var select = arguments[0];
-                            select.selectedIndex = {idx};
-                            var event = new Event('change', {{ bubbles: true }});
-                            select.dispatchEvent(event);
-                            """
-                            driver.execute_script(js, select_elem)
-                            logging.info("使用JS设置下拉框值")
-
-                self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
-                return
-            except NoSuchElementException:
-                logging.info("未找到原生select元素，尝试自定义下拉框")
-            except Exception as e:
-                logging.warning(f"原生select处理失败: {str(e)}")
-
-            # 处理自定义下拉框
-            try:
-                # 查找自定义下拉框触发器
-                triggers = question.find_elements(By.CSS_SELECTOR,
-                                                  ".custom-select, .dropdown-toggle, .select-box, .ant-select-selection")
-                if not triggers:
-                    logging.info("未找到自定义下拉框触发器")
-                    return
-
-                trigger = triggers[0]
-                logging.info(f"找到自定义下拉框触发器: {trigger.get_attribute('outerHTML')[:100]}")
-
-                # 滚动到元素并点击展开
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", trigger)
-                time.sleep(0.3)
-
-                # 确保元素可见
-                if not trigger.is_displayed():
-                    logging.info("触发器不可见，尝试滚动页面")
-                    actions = ActionChains(driver)
-                    actions.move_to_element(trigger).perform()
-                    time.sleep(0.5)
-
-                try:
-                    trigger.click()
-                    logging.info("点击展开下拉框")
-                except ElementNotInteractableException:
-                    logging.info("点击失败，使用JS点击")
-                    driver.execute_script("arguments[0].click();", trigger)
-
-                time.sleep(0.8)  # 等待下拉框展开
-
-                # 获取所有选项 - 使用更广泛的CSS选择器
-                option_selectors = [
-                    ".option",
-                    ".dropdown-item",
-                    ".select-item",
-                    ".ant-select-dropdown-menu-item",
-                    ".menu-item",
-                    ".item",
-                    "li"
-                ]
-
-                option_elems = []
-                for selector in option_selectors:
-                    try:
-                        found = driver.find_elements(By.CSS_SELECTOR, selector)
-                        if found:
-                            option_elems = found
-                            logging.info(f"使用选择器 '{selector}' 找到 {len(option_elems)} 个选项")
-                            break
-                    except:
-                        continue
-
-                if not option_elems:
-                    logging.warning("未找到下拉选项")
-                    return
-
-                # 过滤无效选项
-                valid_options = []
-                for op in option_elems:
-                    try:
-                        if not op.is_displayed():
-                            continue
-                        text = op.text.strip()
-                        if not text or "请选择" in text:
-                            continue
-                        if op.get_attribute("disabled") or op.get_attribute("aria-disabled") == "true":
-                            continue
-                        valid_options.append(op)
-                    except StaleElementReferenceException:
-                        continue
-
-                if not valid_options:
-                    logging.warning("未找到有效选项")
-                    return
-
-                logging.info(f"找到 {len(valid_options)} 个有效选项")
-
-                # 处理概率配置
-                if probs and isinstance(probs, list) and len(probs) == len(valid_options):
-                    try:
-                        weights = [float(p) for p in probs]
-                        total = sum(weights)
-                        if total > 0:
-                            weights = [w / total for w in weights]
-                            selected = np.random.choice(valid_options, p=weights)
-                        else:
-                            selected = random.choice(valid_options)
-                    except Exception as e:
-                        logging.warning(f"概率处理失败，使用随机选择: {str(e)}")
-                        selected = random.choice(valid_options)
-                else:
-                    selected = random.choice(valid_options)
-
-                # 点击选中
-                try:
-                    logging.info(f"尝试点击选项: {selected.text[:20]}...")
-                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-                                          selected)
-                    time.sleep(0.2)
-                    selected.click()
-                    time.sleep(0.5)
-                except Exception as e:
-                    logging.warning(f"点击选项失败: {str(e)}，使用JS点击")
-                    driver.execute_script("arguments[0].click();", selected)
-
-                self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
-                return
-            except Exception as e:
-                logging.error(f"自定义下拉框处理失败: {str(e)}")
-
-            # 最终尝试：直接使用JavaScript设置值
-            try:
-                logging.info("尝试最终方案：JS设置值")
-                # 获取选项文本列表
-                option_texts = config.get("option_texts", {}).get(q_key, [])
-                if not option_texts:
-                    logging.warning("无选项文本配置")
-                    return
-
-                # 随机选择一个选项
-                selected_text = random.choice(option_texts)
-                logging.info(f"随机选择文本: {selected_text}")
-
-                # 查找所有select元素
-                selects = driver.find_elements(By.CSS_SELECTOR, "select")
-                if not selects:
-                    logging.info("无select元素")
-                    return
-
-                for sel in selects:
-                    # 使用JS设置值
-                    js = f"""
-                    var select = arguments[0];
-                    var found = false;
-                    for (var i = 0; i < select.options.length; i++) {{
-                        if (select.options[i].text === '{selected_text}') {{
-                            select.selectedIndex = i;
-                            found = true;
-                            break;
-                        }}
-                    }}
-                    if (!found) {{
-                        for (var i = 0; i < select.options.length; i++) {{
-                            if (select.options[i].text.includes('{selected_text}')) {{
-                                select.selectedIndex = i;
-                                found = true;
-                                break;
-                            }}
-                        }}
-                    }}
-                    if (found) {{
-                        var event = new Event('change', {{ bubbles: true }});
-                        select.dispatchEvent(event);
-                    }}
-                    """
-                    driver.execute_script(js, sel)
-                    logging.info("执行JS设置下拉框值")
-
-                self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
-            except Exception as e:
-                logging.error(f"最终JS设置下拉框值失败: {str(e)}")
-
-        except Exception as e:
-            logging.error(f"填写下拉框题 {q_num} 时出错: {str(e)}")
-            # 截图保存当前页面状态
-            try:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                screenshot_path = f"error_droplist_q{q_num}_{timestamp}.png"
-                driver.save_screenshot(screenshot_path)
-                logging.info(f"已保存错误截图: {screenshot_path}")
-            except:
-                logging.error("无法保存截图")
 
     def verify_submission(self, driver):
         """多维度验证提交是否成功"""
@@ -4360,17 +3893,11 @@ class WJXAutoFillApp:
         alert.update()
         alert.attributes('-topmost', False)
 
-    def create_multiple_text_settings(self, frame, config=None):
+    def create_multiple_text_settings(self, frame):
         """
         多项填空题配置tab页——每空一个entry，支持逗号分隔多个可选答案。
-        保存时遍历 self.multiple_text_entries，按顺序写入 config["multiple_texts"]。
+        保存时遍历 self.multiple_text_entries，按顺序写入 self.config["multiple_texts"]。
         """
-        import tkinter as tk
-        from tkinter import ttk
-
-        if config is None:
-            config = self.config
-
         padx, pady = 4, 2
         desc_frame = ttk.LabelFrame(frame, text="多项填空配置说明")
         desc_frame.pack(fill=tk.X, padx=padx, pady=pady)
@@ -4381,400 +3908,687 @@ class WJXAutoFillApp:
         table_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         headers = ["题号", "题目预览", "每空答案配置"]
         for col, header in enumerate(headers):
-            ttk.Label(table_frame, text=header, font=("Arial", 9, "bold")).grid(
-                row=0, column=col, padx=padx, pady=pady, sticky=tk.W
-            )
+            ttk.Label(table_frame, text=header, font=("Arial", 9, "bold")).grid(row=0, column=col, padx=padx, pady=pady,
+                                                                                sticky=tk.W)
 
         self.multiple_text_entries = []  # 清空，防止重复累积
 
         # 遍历所有多项填空题
-        for row_idx, (q_num, answers_list) in enumerate(config.get("multiple_texts", {}).items(), start=1):
+        for row_idx, (q_num, answers_list) in enumerate(self.config.get("multiple_texts", {}).items(), start=1):
             base_row = row_idx * 2
-            q_text = config.get("question_texts", {}).get(q_num, f"多项填空 {q_num}")
-            空数 = len(answers_list)
-            ttk.Label(table_frame, text=f"第{q_num}题", font=("Arial", 10)).grid(
-                row=base_row, column=0, padx=padx, pady=pady, sticky=tk.NW
-            )
-            preview_text = q_text
-            ttk.Label(table_frame, text=preview_text, width=20, anchor="w", wraplength=300).grid(
-                row=base_row, column=1, padx=padx, pady=pady, sticky=tk.NW
-            )
-            answer_line = ttk.Frame(table_frame)
-            answer_line.grid(row=base_row, column=2, padx=padx, pady=pady, sticky=tk.W)
-            entry_row = []
-            for i in range(空数):
-                entry = ttk.Entry(answer_line, width=18)
-                # 预填已有内容
-                answer_str = ", ".join(answers_list[i]) if i < len(answers_list) else ""
-                entry.insert(0, answer_str)
-                entry.pack(side=tk.LEFT, padx=(0, 2))
-                entry_row.append(entry)
-            self.multiple_text_entries.append(entry_row)
-            # 重置按钮
-            reset_btn = ttk.Button(answer_line, text="重置", width=6,
-                                   command=lambda e=entry_row: [ent.delete(0, tk.END) or ent.insert(0, "示例答案") for
-                                                                ent in e])
-            reset_btn.pack(side=tk.LEFT, padx=(6, 0))
-            ttk.Separator(table_frame, orient='horizontal').grid(
-                row=base_row + 1, column=0, columnspan=3, sticky='ew', pady=10
-            )
-
-    def fill_single(self, driver, question, q_num, config=None, get_option_text=False):
-        """
-        单选题自动填写，兼容新版问卷星自定义UI，优先点击label或外层div，保证前端能识别选中。
-        并自动填写被选中选项关联的弹出文本框（AI优先）。
-        增加get_option_text参数，用于返回被选中的label文本。
-        """
-        import random
-        import time
-        from selenium.webdriver.common.by import By
-        import logging
-        import numpy as np
-
-        if config is None:
-            config = self.config
-
-        radios = question.find_elements(By.CSS_SELECTOR, "input[type='radio']")
-        if not radios:
-            return ""
-
-        q_key = str(q_num)
-        probs = config.get("single_prob", {}).get(q_key, -1)
-
-        if probs == -1:
-            selected_idx = random.randint(0, len(radios) - 1)
-        elif isinstance(probs, list):
-            probs = probs[:len(radios)] if len(probs) > len(radios) else probs + [0] * (len(radios) - len(probs))
-            total = sum(probs)
-            if total > 0:
-                norm_probs = [p / total for p in probs]
-                selected_idx = int(np.random.choice(range(len(radios)), p=norm_probs))
-            else:
-                selected_idx = random.randint(0, len(radios) - 1)
-        else:
-            selected_idx = random.randint(0, len(radios) - 1)
-
-        selected_radio = radios[selected_idx]
-
-        input_id = selected_radio.get_attribute("id")
-        label = None
-        selected_text = ""
-        if input_id:
-            try:
-                label = question.find_element(By.CSS_SELECTOR, f"label[for='{input_id}']")
-                selected_text = label.text.strip()
-            except:
-                label = None
-        if not label:
-            try:
-                label = selected_radio.find_element(By.XPATH, "./..")
-                selected_text = label.text.strip()
-            except:
-                label = None
-        if not label:
-            try:
-                label = selected_radio.find_element(By.XPATH, "../..")
-                selected_text = label.text.strip()
-            except:
-                label = None
-
-        clicked = False
-        for elem in [label, selected_radio]:
-            if elem is not None:
-                try:
-                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", elem)
-                    if elem.is_displayed() and elem.is_enabled():
-                        elem.click()
-                        clicked = True
-                        break
-                except Exception:
-                    continue
-
-        try:
-            driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", selected_radio)
-            driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", selected_radio)
-        except Exception:
-            pass
-
-        try:
-            is_checked = selected_radio.is_selected() or selected_radio.get_attribute("checked")
-            if not is_checked:
-                driver.execute_script("arguments[0].checked = true;", selected_radio)
-                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));",
-                                      selected_radio)
-                driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                                      selected_radio)
-        except Exception:
-            pass
-
-        time.sleep(0.5)
-        self.fill_associated_textbox(
-            driver, question, selected_radio,
-            ai_enabled=config.get("ai_fill_enabled", False),
-            ai_api_key=config.get("openai_api_key", ""),
-            ai_prompt_template=config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}"),
-            question_text=config.get("question_texts", {}).get(str(q_num), "")
+            q_text = self.config.get("question_texts", {}).get(q_num, f"多项填空 {q_num}")
+        空数 = len(answers_list)
+        ttk.Label(table_frame, text=f"第{q_num}题", font=("Arial", 10)).grid(row=base_row, column=0, padx=padx,
+                                                                             pady=pady, sticky=tk.NW)
+        preview_text = q_text
+        ttk.Label(table_frame, text=preview_text, width=20, anchor="w", wraplength=300).grid(row=base_row, column=1,
+                                                                                             padx=padx, pady=pady,
+                                                                                             sticky=tk.NW)
+        answer_line = ttk.Frame(table_frame)
+        answer_line.grid(row=base_row, column=2, padx=padx, pady=pady, sticky=tk.W)
+        entry_row = []
+        for i in range(空数):
+            entry = ttk.Entry(answer_line, width=18)
+            # 预填已有内容
+            answer_str = ", ".join(answers_list[i]) if i < len(answers_list) else ""
+            entry.insert(0, answer_str)
+            entry.pack(side=tk.LEFT, padx=(0, 2))
+            entry_row.append(entry)
+        self.multiple_text_entries.append(entry_row)
+        # 重置按钮
+        reset_btn = ttk.Button(answer_line, text="重置", width=6,
+                               command=lambda e=entry_row: [ent.delete(0, tk.END) or ent.insert(0, "示例答案") for ent
+                                                            in e])
+        reset_btn.pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Separator(table_frame, orient='horizontal').grid(
+            row=base_row + 1, column=0, columnspan=3, sticky='ew', pady=10
         )
 
-        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
-        if get_option_text:
-            return selected_text
-        return
-
-    def fill_multiple(self, driver, question, q_num, config=None):
-        """
-        多选题自动填写，支持分支配置。优先点击label/div，自动填写所有被选中选项关联的文本框（不仅仅是“其他”），
-        保证最少/最多选择数严格生效。AI自动填补充文本。
-        """
-        import random
-        import time
-        from selenium.webdriver.common.by import By
-        import logging
-        import numpy as np
-
+    def fill_text(self, driver, question, q_num, config=None):
+        """填空题/多项填空题自动填写 - 支持分支配置"""
         if config is None:
             config = self.config
 
-        checkboxes = question.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
-        option_labels = []
-        for box in checkboxes:
-            label_text = ""
-            try:
-                label_for = box.get_attribute("id")
-                if label_for:
-                    label = question.find_element(By.CSS_SELECTOR, f"label[for='{label_for}']")
-                    label_text = label.text.strip()
-                if not label_text:
-                    label_text = box.find_element(By.XPATH, "./following-sibling::*[1]").text.strip()
-            except:
-                pass
-            if not label_text:
-                try:
-                    label_text = box.find_element(By.XPATH, "../..").text.strip()
-                except:
-                    pass
-            option_labels.append(label_text or "未知")
-
-        if not checkboxes:
-            logging.warning(f"多选题{q_num}未找到选项，跳过")
-            return
+        import random
+        import time
+        import logging
+        from selenium.webdriver.common.by import By
 
         q_key = str(q_num)
-        conf = config.get("multiple_prob", {}).get(q_key, {"prob": [50] * len(checkboxes), "min_selection": 1,
-                                                           "max_selection": len(checkboxes)})
-        probs = conf.get("prob", [50] * len(checkboxes))
-        min_selection = conf.get("min_selection", 1)
-        max_selection = conf.get("max_selection", len(checkboxes))
-        if max_selection > len(checkboxes): max_selection = len(checkboxes)
-        if min_selection > max_selection: min_selection = max_selection
-        probs = probs[:len(checkboxes)] if len(probs) > len(checkboxes) else probs + [50] * (
-                    len(checkboxes) - len(probs))
+        # 获取所有可填写的控件
+        editable_spans = question.find_elements(By.CSS_SELECTOR, "span.textCont[contenteditable='true']")
+        visible_inputs = [el for el in question.find_elements(By.CSS_SELECTOR, "input[type='text']") if
+                          el.is_displayed()]
+        visible_textareas = [el for el in question.find_elements(By.CSS_SELECTOR, "textarea") if el.is_displayed()]
+        all_fields = editable_spans + visible_inputs + visible_textareas
+        if not all_fields:
+            all_fields = [el for el in question.find_elements(By.CSS_SELECTOR, "input") if el.is_displayed()]
 
-        must_indices = [i for i, prob in enumerate(probs) if prob >= 100]
-        selected = set(must_indices)
-        for i, prob in enumerate(probs):
-            if i not in selected and random.random() * 100 < prob:
-                selected.add(i)
-        while len(selected) < min_selection:
-            left = [i for i in range(len(checkboxes)) if i not in selected]
-            if not left:
-                break
-            selected.add(random.choice(left))
-        while len(selected) > max_selection:
-            removable = [i for i in selected if i not in must_indices]
-            if not removable:
-                break
-            selected.remove(random.choice(removable))
+        if not all_fields:
+            logging.debug(f"题目 {q_num} 未找到可填写的输入框")
+            return
 
-        for idx in selected:
+        # ==== AI自动答题优先 ====
+        answers = []
+        ai_enabled = config.get("ai_fill_enabled", False)
+        api_key = config.get("openai_api_key", "")
+        prompt_template = config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}")
+        question_text = config.get("question_texts", {}).get(q_key, "")
+
+        if ai_enabled and api_key and question_text:
             try:
-                if idx >= len(checkboxes):
-                    continue
-                input_box = checkboxes[idx]
-                label = None
-                input_id = input_box.get_attribute("id")
-                if input_id:
-                    try:
-                        label = question.find_element(By.CSS_SELECTOR, f"label[for='{input_id}']")
-                    except:
-                        label = None
-                if not label:
-                    try:
-                        label = input_box.find_element(By.XPATH, "./following-sibling::*[1]")
-                    except:
-                        label = None
-                if not label:
-                    try:
-                        label = input_box.find_element(By.XPATH, "../..")
-                    except:
-                        label = None
+                service = config.get("ai_service", "质谱清言")
+                if service == "OpenAI":
+                    # 使用OpenAI接口
+                    ai_answer = self.ai_generate_answer(question_text, api_key, prompt_template)
+                else:
+                    # 使用质谱清言接口
+                    ai_answer = self.zhipu_generate_answer(question_text, api_key, prompt_template)
+                answers = [ai_answer] * len(all_fields)
+                logging.info(f"使用{service}生成答案: {ai_answer[:20]}...")
+            except Exception as e:
+                logging.warning(f"AI答题失败: {str(e)}")
+                answers = [self.get_identity_answer("", question_text)] * len(all_fields)
 
-                clicked = False
-                for elem in [label, input_box]:
-                    if elem is not None:
-                        try:
-                            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-                                                  elem)
-                            if elem.is_displayed() and elem.is_enabled():
-                                elem.click()
-                                clicked = True
-                                break
-                        except Exception:
-                            continue
-                if not clicked:
-                    try:
-                        driver.execute_script("arguments[0].click();", input_box)
-                        clicked = True
-                    except Exception:
-                        pass
-                if not clicked:
-                    logging.warning(f"多选题第{q_num}题第{idx + 1}选项无法点击，已跳过")
-                    continue
+        elif q_key in config.get("multiple_texts", {}):
+            ans_lists = config["multiple_texts"][q_key]
+            for i in range(len(all_fields)):
+                if i < len(ans_lists) and ans_lists[i]:
+                    chosen = random.choice(ans_lists[i])
+                    answers.append(chosen)
+                else:
+                    answers.append("自动填写内容")
+        elif q_key in config.get("texts", {}):
+            ans_list = config["texts"][q_key]
+            for i in range(len(all_fields)):
+                chosen = random.choice(ans_list) if ans_list else "自动填写内容"
+                answers.append(chosen)
+        else:
+            answers = ["自动填写内容"] * len(all_fields)
 
+        # ==== 填写答案 ====
+        for idx, field in enumerate(all_fields):
+            val = (field.tag_name == "span" and field.text.strip()) or (field.get_attribute("value"))
+            if val:
+                continue  # 已有内容不覆盖
+
+            answer = answers[idx] if idx < len(answers) else "自动填写内容"
+
+            if field.tag_name == "span" and field.get_attribute("contenteditable") == "true":
+                try:
+                    driver.execute_script("arguments[0].innerText = '';", field)
+                    for ch in answer:
+                        field.send_keys(ch)
+                        time.sleep(random.uniform(0.01, 0.03))
+                except Exception:
+                    driver.execute_script("arguments[0].innerText = arguments[1];", field, answer)
+                try:
+                    driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
+                    driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
+                except Exception:
+                    pass
+            else:
+                try:
+                    field.clear()
+                except Exception:
+                    pass
+                try:
+                    for ch in answer:
+                        field.send_keys(ch)
+                        time.sleep(random.uniform(0.01, 0.03))
+                except Exception:
+                    driver.execute_script("arguments[0].value = arguments[1];", field, answer)
+                try:
+                    driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", field)
+                    driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", field)
+                except Exception:
+                    pass
+
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+        logging.info(f"已填写题目 {q_num}")
+
+    def fill_single(self, driver, question, q_num, config=None):
+        """单选题自动填写 - 支持分支配置"""
+        if config is None:
+            config = self.config
+
+        import random
+        import time
+        import logging
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementNotInteractableException
+
+        q_key = str(q_num)
+        # 获取题目配置
+        prob_config = config.get("single_prob", {}).get(q_key, -1)
+        option_texts = config.get("option_texts", {}).get(q_key, [])
+
+        # 查找所有选项
+        try:
+            options = question.find_elements(By.CSS_SELECTOR, ".ui-radio, input[type='radio']")
+        except:
+            options = []
+
+        if not options:
+            logging.warning(f"题目 {q_num} 未找到单选按钮")
+            return
+
+        # 确定选择概率
+        if prob_config == -1:
+            # 随机选择
+            choice_idx = random.randint(0, len(options) - 1)
+        elif isinstance(prob_config, list) and len(prob_config) == len(options):
+            # 概率分布
+            choice_idx = random.choices(range(len(options)), weights=prob_config)[0]
+        else:
+            # 默认随机选择
+            choice_idx = random.randint(0, len(options) - 1)
+
+        # 尝试点击选项
+        selected_option = options[choice_idx]
+        try:
+            # 滚动到元素并点击
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                  selected_option)
+            selected_option.click()
+            logging.debug(f"题目 {q_num} 选择了选项 {choice_idx + 1}")
+
+            # 检查是否有"其他"文本框需要填写
+            if choice_idx < len(option_texts) and (
+                    "其他" in option_texts[choice_idx] or "other" in option_texts[choice_idx].lower()):
                 self.fill_associated_textbox(
-                    driver, question, input_box,
+                    driver, question, selected_option,
                     ai_enabled=config.get("ai_fill_enabled", False),
                     ai_api_key=config.get("openai_api_key", ""),
-                    ai_prompt_template=config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}"),
-                    question_text=config.get("question_texts", {}).get(str(q_num), "")
+                    ai_prompt_template=config.get("ai_prompt_template", ""),
+                    question_text=config.get("question_texts", {}).get(q_key, "")
                 )
+        except ElementNotInteractableException:
+            try:
+                # 尝试通过JavaScript点击
+                driver.execute_script("arguments[0].click();", selected_option)
+            except:
+                logging.warning(f"无法点击题目 {q_num} 的选项 {choice_idx + 1}")
+        except Exception as e:
+            logging.warning(f"选择题目 {q_num} 的选项时出错: {str(e)}")
+
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+
+    def fill_multiple(self, driver, question, q_num, config=None):
+        """多选题自动填写 - 支持分支配置"""
+        if config is None:
+            config = self.config
+
+        import random
+        import logging
+        from selenium.webdriver.common.by import By
+        from selenium.common.exceptions import ElementNotInteractableException
+
+        q_key = str(q_num)
+        # 获取题目配置
+        prob_config = config.get("multiple_prob", {}).get(q_key, {})
+        option_texts = config.get("option_texts", {}).get(q_key, [])
+        other_texts = config.get("other_texts", {}).get(q_key, [])
+
+        # 解析配置
+        prob_list = prob_config.get("prob", [50] * len(option_texts))
+        min_selection = max(1, prob_config.get("min_selection", 1))
+        max_selection = min(len(option_texts), prob_config.get("max_selection", len(option_texts)))
+
+        # 确保概率列表长度匹配
+        if len(prob_list) != len(option_texts):
+            prob_list = [50] * len(option_texts)
+
+        # 确定选择数量
+        num_selections = random.randint(min_selection, max_selection)
+
+        # 查找所有选项
+        try:
+            options = question.find_elements(By.CSS_SELECTOR, ".ui-checkbox, input[type='checkbox']")
+        except:
+            options = []
+
+        if not options:
+            logging.warning(f"题目 {q_num} 未找到多选按钮")
+            return
+
+        # 根据概率选择选项
+        selected_indices = set()
+        for _ in range(num_selections):
+            # 创建剩余选项的概率列表
+            remaining_probs = [prob_list[i] for i in range(len(prob_list)) if i not in selected_indices]
+            remaining_indices = [i for i in range(len(prob_list)) if i not in selected_indices]
+
+            if not remaining_indices:
+                break
+
+            # 选择选项
+            chosen_idx = random.choices(remaining_indices, weights=remaining_probs)[0]
+            selected_indices.add(chosen_idx)
+
+        # 点击选中的选项
+        for idx in selected_indices:
+            if idx < len(options):
+                try:
+                    # 滚动并点击
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                          options[idx])
+                    options[idx].click()
+                    logging.debug(f"题目 {q_num} 选择了选项 {idx + 1}")
+
+                    # 检查是否有"其他"文本框需要填写
+                    if idx < len(option_texts) and (
+                            "其他" in option_texts[idx] or "other" in option_texts[idx].lower()):
+                        self.fill_associated_textbox(
+                            driver, question, options[idx],
+                            default_text=random.choice(other_texts) if other_texts else "其他内容",
+                            ai_enabled=config.get("ai_fill_enabled", False),
+                            ai_api_key=config.get("openai_api_key", ""),
+                            ai_prompt_template=config.get("ai_prompt_template", ""),
+                            question_text=config.get("question_texts", {}).get(q_key, "")
+                        )
+                except ElementNotInteractableException:
+                    try:
+                        driver.execute_script("arguments[0].click();", options[idx])
+                    except:
+                        logging.warning(f"无法点击题目 {q_num} 的选项 {idx + 1}")
+                except Exception as e:
+                    logging.warning(f"选择题目 {q_num} 的选项时出错: {str(e)}")
+
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+
+    def fill_scale(self, driver, question, q_num, config=None):
+        """量表题自动填写 - 支持分支配置"""
+        if config is None:
+            config = self.config
+
+        import random
+        import logging
+        from selenium.webdriver.common.by import By
+        from selenium.common.exceptions import ElementNotInteractableException
+
+        q_key = str(q_num)
+        # 获取题目配置
+        prob_config = config.get("scale_prob", {}).get(q_key, [])
+        option_texts = config.get("option_texts", {}).get(q_key, [])
+
+        # 查找所有选项
+        try:
+            options = question.find_elements(By.CSS_SELECTOR, ".scale-ul li, .rating-item, .likert-option")
+        except:
+            options = []
+
+        if not options:
+            logging.warning(f"题目 {q_num} 未找到量表选项")
+            return
+
+        # 确定选择概率
+        if len(prob_config) == len(options):
+            # 使用配置的概率
+            choice_idx = random.choices(range(len(options)), weights=prob_config)[0]
+        else:
+            # 默认均匀分布
+            choice_idx = random.randint(0, len(options) - 1)
+
+        # 尝试点击选项
+        if choice_idx < len(options):
+            try:
+                # 滚动到元素并点击
+                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                      options[choice_idx])
+                options[choice_idx].click()
+                logging.debug(f"题目 {q_num} 选择了量表选项 {choice_idx + 1}")
+            except ElementNotInteractableException:
+                try:
+                    driver.execute_script("arguments[0].click();", options[choice_idx])
+                except:
+                    logging.warning(f"无法点击题目 {q_num} 的量表选项 {choice_idx + 1}")
             except Exception as e:
-                logging.warning(f"选择选项时出错: {str(e)}")
-                continue
+                logging.warning(f"选择题目 {q_num} 的量表选项时出错: {str(e)}")
 
         self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
 
     def fill_matrix(self, driver, question, q_num, config=None):
-        """
-        填写矩阵题，支持分支配置
-        """
-        import random
-        import time
-        import logging
-        from selenium.webdriver.common.by import By
-        import numpy as np
-
+        """矩阵题自动填写 - 支持分支配置"""
         if config is None:
             config = self.config
 
-        try:
-            rows = question.find_elements(By.CSS_SELECTOR, f"#divRefTab{q_num} tbody tr")
-            if not rows:
-                return
-
-            q_key = str(q_num)
-            probs = config.get("matrix_prob", {}).get(q_num, -1)
-
-            for i, row in enumerate(rows[1:], 1):  # 跳过表头行
-                cols = row.find_elements(By.CSS_SELECTOR, "td")
-                if not cols:
-                    continue
-
-                if probs == -1:  # 随机选择
-                    selected_col = random.randint(1, len(cols) - 1)
-                elif isinstance(probs, list):  # 按概率选择
-                    col_probs = probs[:len(cols) - 1] if len(probs) > len(cols) - 1 else probs + [0] * (
-                            len(cols) - 1 - len(probs))
-                    total = sum(col_probs)
-                    if total > 0:
-                        col_probs = [p / total for p in col_probs]
-                        selected_col = np.random.choice(range(1, len(cols)), p=col_probs)
-                    else:
-                        selected_col = random.randint(1, len(cols) - 1)
-                else:
-                    selected_col = random.randint(1, len(cols) - 1)
-
-                try:
-                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-                                          cols[selected_col])
-                    time.sleep(0.1)
-                    cols[selected_col].click()
-                except:
-                    driver.execute_script("arguments[0].click();", cols[selected_col])
-
-                self.random_delay(0.1, 0.3)
-
-            self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
-        except Exception as e:
-            logging.error(f"填写矩阵题 {q_num} 时出错: {str(e)}")
-
-    def fill_scale(self, driver, question, q_num, config=None):
-        """
-        填写量表题，支持分支配置
-        """
         import random
-        import time
         import logging
         from selenium.webdriver.common.by import By
-        import numpy as np
+        from selenium.common.exceptions import ElementNotInteractableException
 
-        if config is None:
-            config = self.config
+        q_key = str(q_num)
+        # 获取题目配置
+        prob_config = config.get("matrix_prob", {}).get(q_key, -1)
+        option_texts = config.get("option_texts", {}).get(q_key, [])
 
+        # 查找所有行
         try:
-            options = question.find_elements(By.CSS_SELECTOR, f"#div{q_num} .scale-ul li")
-            if not options:
-                return
+            rows = question.find_elements(By.CSS_SELECTOR, ".matrix tr, .matrix-row")
+        except:
+            rows = []
 
-            q_key = str(q_num)
-            probs = config.get("scale_prob", {}).get(q_key, [1] * len(options))
+        if not rows:
+            logging.warning(f"题目 {q_num} 未找到矩阵行")
+            return
 
-            probs = probs[:len(options)] if len(probs) > len(options) else probs + [1] * (len(options) - len(probs))
-
-            total = sum(probs)
-            if total > 0:
-                probs = [p / total for p in probs]
-                selected = np.random.choice(options, p=probs)
-            else:
-                selected = random.choice(options)
-
+        # 处理每一行
+        for row in rows:
+            # 查找该行的所有选项
             try:
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", selected)
-                time.sleep(0.1)
-                selected.click()
+                options = row.find_elements(By.CSS_SELECTOR, ".ui-radio, input[type='radio']")
             except:
-                driver.execute_script("arguments[0].click();", selected)
+                options = []
 
-            self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+            if not options:
+                continue
+
+            # 确定选择概率
+            if prob_config == -1:
+                # 随机选择
+                choice_idx = random.randint(0, len(options) - 1)
+            elif isinstance(prob_config, list) and len(prob_config) == len(options):
+                # 概率分布
+                choice_idx = random.choices(range(len(options)), weights=prob_config)[0]
+            else:
+                # 默认随机选择
+                choice_idx = random.randint(0, len(options) - 1)
+
+            # 尝试点击选项
+            if choice_idx < len(options):
+                try:
+                    # 滚动到元素并点击
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                          options[choice_idx])
+                    options[choice_idx].click()
+                except ElementNotInteractableException:
+                    try:
+                        driver.execute_script("arguments[0].click();", options[choice_idx])
+                    except:
+                        logging.warning(f"无法点击矩阵题目 {q_num} 的选项")
+                except Exception as e:
+                    logging.warning(f"选择矩阵题目 {q_num} 的选项时出错: {str(e)}")
+
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+
+    def fill_droplist(self, driver, question, q_num, config=None):
+        """下拉框题自动填写 - 支持分支配置"""
+        if config is None:
+            config = self.config
+
+        import random
+        import logging
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import Select
+        from selenium.common.exceptions import NoSuchElementException, ElementNotInteractableException
+
+        q_key = str(q_num)
+        # 获取题目配置
+        prob_config = config.get("droplist_prob", {}).get(q_key, [])
+        option_texts = config.get("option_texts", {}).get(q_key, [])
+
+        # 查找下拉框
+        try:
+            dropdown = question.find_element(By.CSS_SELECTOR, "select")
+        except:
+            logging.warning(f"题目 {q_num} 未找到下拉框")
+            return
+
+        # 获取选项
+        try:
+            select = Select(dropdown)
+            options = select.options
+
+            # 移除禁用选项和空值选项
+            valid_options = [opt for opt in options if not opt.get_attribute("disabled") and opt.get_attribute("value")]
+            valid_indices = [i for i, opt in enumerate(options) if opt in valid_options]
+        except:
+            logging.warning(f"题目 {q_num} 的下拉框解析失败")
+            return
+
+        if not valid_options:
+            logging.warning(f"题目 {q_num} 的下拉框没有有效选项")
+            return
+
+        # 确定选择概率
+        if len(prob_config) == len(valid_options):
+            # 使用配置的概率
+            choice_idx = random.choices(range(len(valid_options)), weights=prob_config)[0]
+        else:
+            # 默认均匀分布
+            choice_idx = random.randint(0, len(valid_options) - 1)
+
+        # 尝试选择选项
+        try:
+            # 滚动到元素
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", dropdown)
+
+            # 使用JavaScript直接设置值
+            value = valid_options[choice_idx].get_attribute("value")
+            driver.execute_script("arguments[0].value = arguments[1];", dropdown, value)
+
+            # 触发事件
+            driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", dropdown)
+            logging.debug(f"题目 {q_num} 选择了下拉选项: {valid_options[choice_idx].text}")
         except Exception as e:
-            logging.error(f"填写量表题 {q_num} 时出错: {str(e)}")
+            try:
+                # 尝试使用Select类
+                select.select_by_index(valid_indices[choice_idx])
+            except:
+                logging.warning(f"选择题目 {q_num} 的下拉选项失败: {str(e)}")
+
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
 
     def fill_reorder(self, driver, question, q_num, config=None):
-        """
-        问卷星排序题专用：只点击一轮，每个li只点一次，顺序随机，绝不补点。
-        支持分支配置。
-        """
+        """排序题自动填写 - 支持分支配置"""
+        if config is None:
+            config = self.config
+
         import random
         import time
         import logging
         from selenium.webdriver.common.by import By
+        from selenium.webdriver.common.action_chains import ActionChains
+        from selenium.common.exceptions import ElementNotInteractableException
 
+        q_key = str(q_num)
+        # 获取题目配置
+        prob_config = config.get("reorder_prob", {}).get(q_key, [])
+        option_texts = config.get("option_texts", {}).get(q_key, [])
+
+        # 查找排序项
+        try:
+            items = question.find_elements(By.CSS_SELECTOR, ".sort-ul li, .sortable li, .wjx-sortable li")
+        except:
+            items = []
+
+        if len(items) < 2:
+            logging.warning(f"题目 {q_num} 未找到足够的排序项")
+            return
+
+        # 创建位置概率分布
+        if len(prob_config) == len(items):
+            position_probs = prob_config
+        else:
+            position_probs = [1.0 / len(items)] * len(items)
+
+        # 生成随机顺序
+        new_order = list(range(len(items)))
+        random.shuffle(new_order)
+
+        # 拖动项目到新位置
+        try:
+            for target_idx in range(len(items)):
+                # 选择源项目（根据新顺序）
+                src_idx = new_order[target_idx]
+                source_item = items[src_idx]
+
+                # 计算目标位置
+                target_item = items[target_idx]
+
+                # 执行拖动操作
+                actions = ActionChains(driver)
+                actions.drag_and_drop(source_item, target_item)
+                actions.perform()
+                time.sleep(0.5)
+
+                # 更新项目列表（顺序可能已改变）
+                items = question.find_elements(By.CSS_SELECTOR, ".sort-ul li, .sortable li, .wjx-sortable li")
+        except Exception as e:
+            logging.warning(f"排序题目 {q_num} 拖动失败: {str(e)}")
+
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+
+    def auto_detect_question_type(self, driver, question, q_num, config=None):
+        """自动检测题型并填写 - 支持分支配置"""
         if config is None:
             config = self.config
 
+        import random
+        import logging
+        import re
+        from selenium.webdriver.common.by import By
+        from selenium.common.exceptions import ElementNotInteractableException, StaleElementReferenceException
+
+        qid = q_num
         try:
-            lis = question.find_elements(
-                By.CSS_SELECTOR,
-                '.sort-ul li, .sortable li, .wjx-sortable li, .ui-sortable li, .sort-container li, ul li'
-            )
-            lis = [li for li in lis if li.is_displayed() and li.is_enabled()]
-            if not lis:
-                logging.warning(f"排序题 {q_num} 未找到选项，结构为: {question.get_attribute('outerHTML')}")
+            # 获取问题文本
+            try:
+                title_elem = question.find_element(By.CSS_SELECTOR,
+                                                   ".div_title_question, .question-title, .field-label")
+                q_text = title_elem.text.strip()
+            except:
+                q_text = ""
+
+            # 1. 检查是否排序题
+            sort_lis = question.find_elements(By.CSS_SELECTOR,
+                                              ".sort-ul li, .sortable li, .wjx-sortable li, .ui-sortable li, .sort-container li, ul.sort-ul > li, ul.sortable > li")
+            if sort_lis and len(sort_lis) >= 2:
+                self.fill_reorder(driver, question, qid, config=config)
                 return
-            idxs = list(range(len(lis)))
-            random.shuffle(idxs)
-            for idx in idxs:
-                try:
-                    lis[idx].click()
-                    time.sleep(0.3)
-                except Exception as e:
+
+            if "排序" in q_text or "顺序" in q_text or "拖动" in q_text:
+                self.fill_reorder(driver, question, qid, config=config)
+                return
+
+            # 2. 检查是否单选题
+            radio_btns = question.find_elements(By.CSS_SELECTOR, ".ui-radio, input[type='radio']")
+            if radio_btns:
+                self.fill_single(driver, question, qid, config=config)
+                return
+
+            # 3. 检查是否多选题
+            checkboxes = question.find_elements(By.CSS_SELECTOR, ".ui-checkbox, input[type='checkbox']")
+            if checkboxes:
+                self.fill_multiple(driver, question, qid, config=config)
+                return
+
+            # 4. 填空题/多项填空
+            spans = question.find_elements(By.CSS_SELECTOR, "span.textCont[contenteditable='true']")
+            text_inputs = question.find_elements(By.CSS_SELECTOR, "input[type='text'], textarea")
+            if spans or (text_inputs and len(text_inputs) >= 1):
+                self.fill_text(driver, question, qid, config=config)
+                return
+
+            # 5. 量表题
+            scale_items = question.find_elements(By.CSS_SELECTOR, ".scale-ul li, .scale-item")
+            if scale_items:
+                self.fill_scale(driver, question, qid, config=config)
+                return
+
+            # 6. 矩阵题
+            matrix_rows = question.find_elements(By.CSS_SELECTOR, ".matrix tr, .matrix-row")
+            if matrix_rows:
+                self.fill_matrix(driver, question, qid, config=config)
+                return
+
+            # 7. 下拉框
+            dropdowns = question.find_elements(By.CSS_SELECTOR, "select")
+            if dropdowns:
+                self.fill_droplist(driver, question, qid, config=config)
+                return
+
+            # 8. 通用点击逻辑
+            clickable = question.find_elements(By.CSS_SELECTOR, "li, label, button")
+            for elem in clickable:
+                if elem.is_displayed() and elem.is_enabled():
                     try:
-                        driver.execute_script("arguments[0].click();", lis[idx])
+                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                              elem)
+                        elem.click()
+                        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+                        return
+                    except ElementNotInteractableException:
+                        try:
+                            driver.execute_script("arguments[0].click();", elem)
+                            return
+                        except:
+                            continue
+                    except StaleElementReferenceException:
+                        continue
                     except Exception:
-                        logging.warning(f"排序题 {q_num} 第{idx + 1}项点击失败: {e}")
-            self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+                        continue
+
+            # 9. 通用输入逻辑
+            text_inputs = question.find_elements(By.CSS_SELECTOR, "input, textarea")
+            for inp in text_inputs:
+                if inp.is_displayed() and not inp.get_attribute("value"):
+                    try:
+                        inp.send_keys("自动填写内容")
+                        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+                        return
+                    except:
+                        continue
+
+            logging.warning(f"无法自动检测题目 {qid} 的类型")
         except Exception as e:
-            logging.error(f"填写排序题 {q_num} 时出错: {str(e)}")
+            logging.error(f"自动检测题目类型时出错: {str(e)}")
+
+    def is_filled(self, question, config=None):
+        """检查题目是否已填写 - 支持分支配置"""
+        if config is None:
+            config = self.config
+
+        from selenium.webdriver.common.by import By
+
+        try:
+            # 检查单选/多选是否已选
+            checked_radios = question.find_elements(By.CSS_SELECTOR, ".ui-radio.checked, input[type='radio']:checked")
+            checked_checks = question.find_elements(By.CSS_SELECTOR,
+                                                    ".ui-checkbox.checked, input[type='checkbox']:checked")
+            if checked_radios or checked_checks:
+                return True
+
+            # 检查文本输入是否已填
+            text_inputs = question.find_elements(By.CSS_SELECTOR, "input[type='text'], textarea")
+            for inp in text_inputs:
+                if inp.get_attribute("value"):
+                    return True
+
+            # 检查下拉框是否已选
+            selects = question.find_elements(By.CSS_SELECTOR, "select")
+            for select in selects:
+                if select.get_attribute("value"):
+                    return True
+
+            # 检查可编辑区域
+            edit_spans = question.find_elements(By.CSS_SELECTOR, "span[contenteditable='true']")
+            for span in edit_spans:
+                if span.text.strip():
+                    return True
+
+            # 检查排序题是否有顺序
+            sort_items = question.find_elements(By.CSS_SELECTOR, ".sort-ul li, .sortable li")
+            if sort_items and len(sort_items) > 1:
+                # 简单假设排序题总是已填
+                return True
+
+            return False
+        except:
+            return False
 
     def bind_mousewheel_to_scrollbar(self, canvas):
         """将鼠标滚轮事件绑定到指定的画布上"""
@@ -4828,41 +4642,7 @@ class WJXAutoFillApp:
                 logging.error(f"更新进度时出错: {str(e)}")
             time.sleep(0.5)
 
-    def is_filled(self, question):
-        """检查问题是否已填写"""
-        try:
-            # 检查排序题
-            if question.find_elements(By.CSS_SELECTOR,
-                                      ".sort-ul, .sortable, .wjx-sortable, .ui-sortable, .sort-container"):
-                return True
-            # 检查 input/textarea/select
-            inputs = question.find_elements(By.CSS_SELECTOR, "input, textarea, select")
-            for inp in inputs:
-                typ = inp.get_attribute("type")
-                if typ in ("checkbox", "radio"):
-                    if inp.is_selected():
-                        return True
-                elif typ in ("text", None):
-                    if inp.get_attribute("value"):
-                        return True
-                elif typ == "select-one":
-                    v = inp.get_attribute("value")
-                    if v and v != "" and v != "请选择":
-                        return True
-            # 检查 contenteditable span
-            spans = question.find_elements(By.CSS_SELECTOR, "span[contenteditable='true']")
-            for span in spans:
-                if span.text.strip():
-                    return True
-                try:
-                    inner = driver.execute_script("return arguments[0].innerText;", span)
-                    if inner and inner.strip():
-                        return True
-                except Exception:
-                    continue
-            return False
-        except Exception:
-            return False
+
 
     def toggle_pause(self):
         """切换暂停/继续状态"""
@@ -5167,164 +4947,7 @@ class WJXAutoFillApp:
         delay = random.uniform(min_time, max_time)
         time.sleep(delay)
 
-    def set_blank_texts(self, qid, answers):
-        """
-        设置指定填空题的答案池，并同步更新对应UI控件（如存在）。
-        :param qid: 题目编号（int或str）
-        :param answers: 答案列表（list of str）
-        """
-        qid_str = str(qid)
-        # 更新数据
-        if "texts" not in self.config:
-            self.config["texts"] = {}
-        self.config["texts"][qid_str] = answers
 
-        # 如果有UI控件，自动同步显示
-        if hasattr(self, 'blank_text_widget') and qid_str in self.blank_text_widget:
-            widget = self.blank_text_widget[qid_str]
-            widget.delete("1.0", "end")
-            for ans in answers:
-                widget.insert("end", ans + "\n")
-        # 可选：通知其它模块或刷新
-        # self.refresh_some_ui_if_needed()
-    def generate_sample_answers(self, num):
-        """
-        批量生成num份问卷模拟答案，返回文本或保存到文件。
-        支持AI生成和本地随机生成，自动推断题型和配置。
-        """
-        import random
-        import json
-
-        answers_list = []
-        for _ in range(num):
-            answer = {}
-            for qid, qtext in self.config.get("question_texts", {}).items():
-                # 优先选题型
-                qid_str = str(qid)
-                # 单选题
-                if qid_str in self.config.get("single_prob", {}):
-                    options = self.config.get("option_texts", {}).get(qid_str, [])
-                    probs = self.config["single_prob"][qid_str]
-                    if probs == -1 or not isinstance(probs, list):
-                        idx = random.randint(0, len(options) - 1)
-                    else:
-                        total = sum(probs)
-                        weights = [p / total for p in probs] if total > 0 else [1 / len(options)] * len(options)
-                        idx = random.choices(range(len(options)), weights=weights)[0]
-                    answer[qtext] = options[idx] if idx < len(options) else ""
-                # 多选题
-                elif qid_str in self.config.get("multiple_prob", {}):
-                    options = self.config.get("option_texts", {}).get(qid_str, [])
-                    conf = self.config["multiple_prob"][qid_str]
-                    probs = conf.get("prob", [50] * len(options))
-                    min_sel = conf.get("min_selection", 1)
-                    max_sel = conf.get("max_selection", max(1, len(options)))
-                    sel = []
-                    for i, p in enumerate(probs):
-                        if random.random() < p / 100:
-                            sel.append(options[i] if i < len(options) else "")
-                    if len(sel) < min_sel:
-                        left = [o for i, o in enumerate(options) if o not in sel]
-                        sel += random.sample(left, min(min_sel - len(sel), len(left)))
-                    if len(sel) > max_sel:
-                        sel = random.sample(sel, max_sel)
-                    answer[qtext] = ",".join(sel)
-                # 下拉框
-                elif qid_str in self.config.get("droplist_prob", {}):
-                    options = self.config.get("option_texts", {}).get(qid_str, [])
-                    probs = self.config["droplist_prob"][qid_str]
-                    total = sum(probs)
-                    weights = [p / total for p in probs] if total > 0 else [1 / len(options)] * len(options)
-                    idx = random.choices(range(len(options)), weights=weights)[0]
-                    answer[qtext] = options[idx] if idx < len(options) else ""
-                # 填空题
-                elif qid_str in self.config.get("texts", {}):
-                    texts = self.config["texts"][qid_str]
-                    answer[qtext] = random.choice(texts) if texts else ""
-                # 多项填空
-                elif qid_str in self.config.get("multiple_texts", {}):
-                    ans_lists = self.config["multiple_texts"][qid_str]
-                    ans = [random.choice(a) if a else "" for a in ans_lists]
-                    answer[qtext] = ";".join(ans)
-                # 排序题
-                elif qid_str in self.config.get("reorder_prob", {}):
-                    options = self.config.get("option_texts", {}).get(qid_str, [])
-                    order = options[:]
-                    random.shuffle(order)
-                    answer[qtext] = "->".join(order)
-                # 量表题、矩阵题等
-                elif qid_str in self.config.get("scale_prob", {}):
-                    options = self.config.get("option_texts", {}).get(qid_str, [])
-                    probs = self.config["scale_prob"][qid_str]
-                    total = sum(probs)
-                    weights = [p / total for p in probs] if total > 0 else [1 / len(options)] * len(options)
-                    idx = random.choices(range(len(options)), weights=weights)[0]
-                    answer[qtext] = options[idx] if idx < len(options) else ""
-                elif qid_str in self.config.get("matrix_prob", {}):
-                    options = self.config.get("option_texts", {}).get(qid_str, [])
-                    answer[qtext] = random.choice(options) if options else ""
-                else:
-                    answer[qtext] = ""
-            answers_list.append(answer)
-        # 可选：保存到文件/返回
-        try:
-            with open("sample_answers.json", "w", encoding="utf-8") as f:
-                json.dump(answers_list, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-        return answers_list
-
-    def check_params(self):
-        """
-        检查当前参数设置的合理性，返回建议和自动修复提示。
-        """
-        tips = []
-        # 目标份数
-        try:
-            target = int(self.config.get("target_num", 0))
-            if target <= 0:
-                tips.append("目标份数应大于0。")
-        except Exception:
-            tips.append("目标份数设置异常。")
-        # 微信比例
-        ratio = self.config.get("weixin_ratio", 0.5)
-        if not (0 <= ratio <= 1):
-            tips.append("微信比例应为0~1之间。")
-        # 时间区间
-        min_d, max_d = self.config.get("min_duration", 1), self.config.get("max_duration", 20)
-        if min_d > max_d:
-            tips.append("最短时长不能大于最长时长。")
-        # 线程数
-        threads = self.config.get("num_threads", 4)
-        if threads < 1 or threads > 20:
-            tips.append("线程数应在1~20之间，建议4~8。")
-        # 延迟
-        min_delay, max_delay = self.config.get("min_delay", 1), self.config.get("max_delay", 2)
-        if min_delay > max_delay:
-            tips.append("最小延迟应小于最大延迟。")
-        # 批量/休息
-        batch_size = self.config.get("batch_size", 5)
-        batch_pause = self.config.get("batch_pause", 15)
-        if batch_size < 1:
-            tips.append("批量份数应≥1。")
-        if batch_pause < 0:
-            tips.append("批量休息时间应≥0分钟。")
-        # 题型/概率检查
-        for qid, qtext in self.config.get("question_texts", {}).items():
-            qid_str = str(qid)
-            if qid_str in self.config.get("single_prob", {}):
-                probs = self.config["single_prob"][qid_str]
-                if isinstance(probs, list) and abs(sum(probs) - 1) > 0.01 and all(p >= 0 for p in probs):
-                    tips.append(f"第{qid}题单选概率和不为1，建议调整。")
-            if qid_str in self.config.get("multiple_prob", {}):
-                conf = self.config["multiple_prob"][qid_str]
-                min_sel = conf.get("min_selection", 1)
-                max_sel = conf.get("max_selection", 1)
-                if min_sel > max_sel:
-                    tips.append(f"第{qid}题多选最小选择数大于最大选择数，请检查。")
-        if not tips:
-            return "参数设置正常，无需优化。"
-        return "\n".join(tips)
     def ai_generate_structure(self):
         """
         本地+AI双重题型识别，AI辅助判别，自动清洗AI返回的非标准JSON，解决‘AI解析失败’弹窗，支持一键修正量表题。
@@ -5471,188 +5094,760 @@ class WJXAutoFillApp:
             self.status_var.set("AI结构识别失败")
             self.status_indicator.config(foreground="red")
 
-    def set_param(self, key, value):
-        """
-        设置全局参数如目标份数，并同步刷新主UI控件和显示。
-        支持AI助手Tab指令后自动刷新对应控件。
-        """
-        if key in self.config:
-            self.config[key] = value
-            # 刷新UI控件
-            try:
-                if key == "target_num":
-                    # 目标份数（Spinbox）
-                    self.target_entry.set(value)
-                elif key == "weixin_ratio":
-                    # 微信作答比率（Scale/Label）
-                    self.ratio_scale.set(float(value))
-                    self.ratio_var.set(f"{float(value) * 100:.0f}%")
-                elif key == "min_duration":
-                    self.min_duration.set(int(value))
-                elif key == "max_duration":
-                    self.max_duration.set(int(value))
-                elif key == "min_delay":
-                    self.min_delay.set(float(value))
-                elif key == "max_delay":
-                    self.max_delay.set(float(value))
-                elif key == "per_question_delay":
-                    # value为元组或列表
-                    self.min_q_delay.set(float(value[0]))
-                    self.max_q_delay.set(float(value[1]))
-                elif key == "per_page_delay":
-                    self.min_p_delay.set(float(value[0]))
-                    self.max_p_delay.set(float(value[1]))
-                elif key == "submit_delay":
-                    self.submit_delay.set(int(value))
-                elif key == "num_threads":
-                    self.num_threads.set(int(value))
-                elif key == "use_ip":
-                    self.use_ip_var.set(bool(value))
-                elif key == "ip_api":
-                    self.ip_entry.delete(0, "end")
-                    self.ip_entry.insert(0, str(value))
-                elif key == "ip_change_mode":
-                    self.ip_change_mode.set(value)
-                elif key == "ip_change_batch":
-                    self.ip_change_batch.set(int(value))
-                elif key == "headless":
-                    self.headless_var.set(bool(value))
-                elif key == "enable_smart_gap":
-                    self.enable_smart_gap_var.set(bool(value))
-                elif key == "min_submit_gap":
-                    self.min_submit_gap.set(int(value))
-                elif key == "max_submit_gap":
-                    self.max_submit_gap.set(int(value))
-                elif key == "batch_size":
-                    self.batch_size.set(int(value))
-                elif key == "batch_pause":
-                    self.batch_pause.set(int(value))
-                elif key == "ai_service":
-                    self.ai_service.set(value)
-                elif key == "ai_fill_enabled":
-                    self.ai_fill_var.set(bool(value))
-                elif key == "openai_api_key":
-                    self.openai_api_key_entry.delete(0, "end")
-                    self.openai_api_key_entry.insert(0, str(value))
-                elif key == "qingyan_api_key":
-                    self.qingyan_api_key_entry.delete(0, "end")
-                    self.qingyan_api_key_entry.insert(0, str(value))
-                elif key == "ai_prompt_template":
-                    self.ai_prompt_combobox.set(str(value))
-            except Exception as e:
-                import logging
-                logging.warning(f"set_param({key})时同步控件出错: {e}")
+    def add_branch_path(self):
+        """添加新的分支路径"""
+        # 创建分支配置对话框
+        dialog = tk.Toplevel(self.root)
+        dialog.title("添加分支路径")
+        dialog.geometry("500x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
 
-            # 题型参数变化时刷新题型设置
-            if key in [
-                "single_prob", "multiple_prob", "matrix_prob", "texts", "multiple_texts",
-                "reorder_prob", "droplist_prob", "scale_prob", "other_texts",
-                "question_texts", "option_texts"
-            ]:
-                self.reload_question_settings()
-            return True, f"{key} 已修改为 {value}"
-        return False, f"参数 {key} 不存在"
+        # 分支名称
+        ttk.Label(dialog, text="分支名称:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        branch_name_entry = ttk.Entry(dialog, width=20)
+        branch_name_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
 
-    def set_question_type(self, q_num, q_type):
-        """设置指定题号的题型"""
-        q_num = str(q_num)
-        if q_num not in self.config["question_texts"]:
-            return False, f"题目 {q_num} 不存在"
-        # 清除该题在所有题型配置里的记录
-        for config_key in [
-            "single_prob", "multiple_prob", "matrix_prob", "texts", "multiple_texts",
-            "reorder_prob", "droplist_prob", "scale_prob"
-        ]:
-            if q_num in self.config[config_key]:
-                del self.config[config_key][q_num]
-        # 加入新题型
-        type_map = {
-            "单选题": "single_prob",
-            "多选题": "multiple_prob",
-            "矩阵题": "matrix_prob",
-            "填空题": "texts",
-            "多项填空": "multiple_texts",
-            "排序题": "reorder_prob",
-            "下拉框": "droplist_prob",
-            "量表题": "scale_prob"
-        }
-        q_type_key = type_map.get(q_type)
-        if not q_type_key:
-            return False, f"不支持的类型: {q_type}"
-        option_count = len(self.config["option_texts"].get(q_num, []))
-        if q_type_key == "single_prob":
-            self.config["single_prob"][q_num] = -1
-        elif q_type_key == "multiple_prob":
-            self.config["multiple_prob"][q_num] = {
-                "prob": [50] * option_count,
-                "min_selection": 1,
-                "max_selection": max(1, option_count)
+        # 触发问题
+        ttk.Label(dialog, text="触发问题ID:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        trigger_q_entry = ttk.Entry(dialog, width=10)
+        trigger_q_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+
+        # 触发选项
+        ttk.Label(dialog, text="触发选项:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        trigger_opt_entry = ttk.Entry(dialog, width=20)
+        trigger_opt_entry.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
+
+        # 确认按钮
+        def save_branch():
+            branch_name = branch_name_entry.get().strip()
+            trigger_q = trigger_q_entry.get().strip()
+            trigger_opt = trigger_opt_entry.get().strip()
+
+            if not branch_name or not trigger_q or not trigger_opt:
+                messagebox.showerror("错误", "请填写所有字段")
+                return
+
+            # 初始化分支配置
+            self.config["branch_questions"][branch_name] = {
+                "trigger_question": trigger_q,
+                "trigger_option": trigger_opt,
+                "questions": {},
+                "options": {},
+                "single_prob": {},
+                "multiple_prob": {},
+                "texts": {},
+                # 其他配置...
             }
-        elif q_type_key == "texts":
-            self.config["texts"][q_num] = ["自动填写内容"]
-        elif q_type_key == "multiple_texts":
-            self.config["multiple_texts"][q_num] = [["自动填写内容"]] * option_count
-        elif q_type_key == "matrix_prob":
-            self.config["matrix_prob"][q_num] = -1
-        elif q_type_key == "reorder_prob":
-            self.config["reorder_prob"][q_num] = [0.25] * option_count
-        elif q_type_key == "droplist_prob":
-            self.config["droplist_prob"][q_num] = [0.3] * option_count
-        elif q_type_key == "scale_prob":
-            self.config["scale_prob"][q_num] = [0.2] * option_count
-        self.reload_question_settings()
-        return True, f"第{q_num}题已修改为{q_type}"
 
-    def set_question_prob(self, q_num, probs):
-        """设置题目选项概率"""
-        q_num = str(q_num)
-        for config_key in [
-            "single_prob", "multiple_prob", "matrix_prob",
-            "reorder_prob", "droplist_prob", "scale_prob"
-        ]:
-            if q_num in self.config[config_key]:
-                if config_key == "multiple_prob":
-                    if isinstance(self.config[config_key][q_num]["prob"], list):
-                        self.config[config_key][q_num]["prob"] = probs
+            # 更新UI
+            self.update_branch_combobox()
+            dialog.destroy()
+
+        ttk.Button(dialog, text="保存", command=save_branch).grid(row=3, column=1, padx=5, pady=10)
+
+    def edit_branch(self):
+        """编辑选中的分支"""
+        branch_name = self.branch_combobox.get()
+        if not branch_name:
+            messagebox.showwarning("提示", "请先选择要编辑的分支")
+            return
+
+        branch_config = self.config["branch_questions"][branch_name]
+
+        # 创建分支编辑对话框
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"编辑分支: {branch_name}")
+        dialog.geometry("800x600")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # 创建Notebook
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # 分支基本信息标签页
+        info_frame = ttk.Frame(notebook)
+        notebook.add(info_frame, text="基本信息")
+
+        ttk.Label(info_frame, text="触发问题ID:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        trigger_q_entry = ttk.Entry(info_frame, width=10)
+        trigger_q_entry.insert(0, branch_config["trigger_question"])
+        trigger_q_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Label(info_frame, text="触发选项:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        trigger_opt_entry = ttk.Entry(info_frame, width=20)
+        trigger_opt_entry.insert(0, branch_config["trigger_option"])
+        trigger_opt_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+
+        # 分支题目配置标签页
+        config_frame = ttk.Frame(notebook)
+        notebook.add(config_frame, text="题目配置")
+
+        # 在此处创建分支题目配置界面（类似主配置界面）
+        # 创建滚动区域
+        canvas = tk.Canvas(config_frame)
+        scrollbar = ttk.Scrollbar(config_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # 添加题目配置控件
+        # 这里应该实现与主配置类似的题目配置界面
+        # 但针对的是当前分支的配置
+        self.create_branch_question_settings(scrollable_frame, branch_config)
+
+        # 保存按钮
+        def save_changes():
+            branch_config["trigger_question"] = trigger_q_entry.get().strip()
+            branch_config["trigger_option"] = trigger_opt_entry.get().strip()
+            # 这里还需要保存题目配置的更改
+            dialog.destroy()
+
+        ttk.Button(dialog, text="保存更改", command=save_changes).pack(side=tk.BOTTOM, pady=10)
+
+    def create_branch_question_settings(self, frame, branch_config):
+        """为分支创建题目配置界面（类似主配置）"""
+        # 这里应该实现与主界面create_question_settings类似的逻辑
+        # 但使用branch_config中的数据
+
+        # 示例：添加题目文本配置
+        ttk.Label(frame, text="题目配置", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+
+        for qid, qtext in branch_config["questions"].items():
+            row_frame = ttk.Frame(frame)
+            row_frame.pack(fill=tk.X, pady=2)
+
+            ttk.Label(row_frame, text=f"题目{qid}:").pack(side=tk.LEFT, padx=5)
+            entry = ttk.Entry(row_frame, width=40)
+            entry.insert(0, qtext)
+            entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+            # 保存更改的回调
+            entry.bind("<FocusOut>", lambda e, qid=qid: self.update_branch_question_text(
+                branch_config, qid, e.widget.get()
+            ))
+
+        # 类似地添加选项配置、概率配置等
+
+    def update_branch_combobox(self):
+        """更新分支下拉框的选项"""
+        # 获取所有分支名称
+        branches = list(self.config["branch_questions"].keys())
+
+        # 更新下拉框的值
+        self.branch_combobox['values'] = branches
+
+        # 设置当前选中的分支
+        if branches:
+            self.branch_combobox.current(0)
+            self.update_branch_preview(branches[0])  # 更新预览
+        else:
+            self.branch_combobox.set('')
+            # 清空预览区域
+            for widget in self.branch_preview_frame.winfo_children():
+                widget.destroy()
+            ttk.Label(self.branch_preview_frame, text="无分支配置").pack()
+
+    def update_branch_preview(self, branch_name):
+        """更新分支预览区域"""
+        # 清空预览区域
+        for widget in self.branch_preview_frame.winfo_children():
+            widget.destroy()
+
+        # 获取分支配置
+        branch_config = self.config["branch_questions"].get(branch_name, {})
+        if not branch_config:
+            return
+
+        # 显示分支信息
+        ttk.Label(self.branch_preview_frame, text=f"分支名称: {branch_name}", font=("Arial", 10, "bold")).pack(
+            anchor=tk.W)
+
+        # 显示触发条件
+        trigger_question = branch_config.get("trigger_question", "未知")
+        trigger_option = branch_config.get("trigger_option", "未知")
+        ttk.Label(self.branch_preview_frame,
+                  text=f"触发条件: 当第{trigger_question}题选择'{trigger_option}'时").pack(anchor=tk.W)
+
+        # 显示分支中的题目
+        questions = branch_config.get("questions", {})
+        if questions:
+            ttk.Label(self.branch_preview_frame, text="包含题目:", font=("Arial", 10, "bold")).pack(anchor=tk.W)
+            for q_num, q_text in questions.items():
+                preview = f"第{q_num}题: {q_text[:30]}{'...' if len(q_text) > 30 else ''}"
+                ttk.Label(self.branch_preview_frame, text=preview).pack(anchor=tk.W, padx=20)
+        else:
+            ttk.Label(self.branch_preview_frame, text="此分支不包含题目").pack(anchor=tk.W)
+
+    def is_option_selected(self, driver, qid, option_text):
+        """检查指定选项是否被选中"""
+        try:
+            # 找到指定问题的选项
+            question = driver.find_element(By.ID, f"div{qid}")
+            options = question.find_elements(By.CSS_SELECTOR, ".ui-radio, .ui-checkbox")
+
+            for opt in options:
+                label = opt.find_element(By.XPATH, "./following-sibling::label")
+                if option_text in label.text:
+                    return opt.get_attribute("class").endswith("checked")
+        except:
+            return False
+        return False
+
+
+    def is_branch_active(self, driver, branch_name):
+        """检查分支是否仍然激活"""
+        branch_config = self.config["branch_questions"][branch_name]
+        return self.is_option_selected(driver, branch_config["trigger_question"], branch_config["trigger_option"])
+
+
+
+    def _parse_current_page(self, driver):
+        """增强版分支题目解析"""
+        from selenium.webdriver.common.by import By
+        import re
+
+        try:
+            # 查找所有题目容器
+            question_containers = driver.find_elements(By.CSS_SELECTOR, ".div_question, .field, .question")
+            result = []
+
+            for container in question_containers:
+                if not container.is_displayed():
+                    continue
+
+                try:
+                    # 获取题目ID
+                    qid = container.get_attribute("id") or ""
+                    qid = re.sub(r'\D', '', qid)  # 只保留数字
+                    if not qid:
+                        continue
+
+                    # 获取题目文本
+                    title_elements = container.find_elements(By.CSS_SELECTOR,
+                                                             ".div_title_question, .field-label, .question-title")
+                    if not title_elements:
+                        # 尝试其他选择器
+                        title_elements = container.find_elements(By.CSS_SELECTOR, "h2, h3, h4, .title, .question-text")
+
+                    qtext = title_elements[0].text.strip() if title_elements else "未命名题目"
+
+                    # 获取选项 - 增强选择器
+                    options = []
+
+                    # 1. 尝试单选/多选选项
+                    choice_labels = container.find_elements(By.CSS_SELECTOR,
+                                                            ".ulradiocheck label, .wjx-option-label, .option-label")
+                    if choice_labels:
+                        options = [label.text.strip() for label in choice_labels if label.text.strip()]
+
+                    # 2. 尝试下拉框选项
+                    if not options:
+                        select_elements = container.find_elements(By.CSS_SELECTOR, "select")
+                        if select_elements:
+                            for select in select_elements:
+                                options_elements = select.find_elements(By.CSS_SELECTOR, "option")
+                                for opt in options_elements:
+                                    if opt.get_attribute("value") and not opt.get_attribute("disabled"):
+                                        options.append(opt.text.strip())
+
+                    # 3. 尝试填空提示文本
+                    if not options:
+                        inputs = container.find_elements(By.CSS_SELECTOR, "input[type='text'], textarea")
+                        options = [inp.get_attribute("placeholder") or "填空" for inp in inputs]
+
+                    # 4. 尝试量表题选项
+                    if not options:
+                        scale_items = container.find_elements(By.CSS_SELECTOR, ".scale-ul li, .rating-item")
+                        options = [item.text.strip() for item in scale_items if item.text.strip()]
+
+                    result.append({
+                        "id": qid,
+                        "text": qtext,
+                        "options": options
+                    })
+                except Exception as e:
+                    logging.error(f"解析题目时出错: {str(e)}")
+            return result
+        except Exception as e:
+            logging.error(f"解析当前页面时出错: {str(e)}")
+            return []
+
+
+    def fill_survey(self, driver):
+        """
+        完整版问卷填写方法，支持分叉路径和稳健的页面处理
+        """
+        import random
+        import time
+        import logging
+        import re
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import (TimeoutException, WebDriverException,
+                                                NoSuchElementException, StaleElementReferenceException)
+
+        current_page = 1
+        max_pages = 20  # 最大页数限制
+        processed_signatures = set()  # 页面签名判重
+        current_branch = None  # 当前分支
+        total_questions = 0  # 总题数计数器
+        answered_questions = 0  # 已回答题数
+
+        # 获取分支配置
+        branch_configs = self.config.get("branch_questions", {})
+
+        def handle_fork_question():
+            """处理分叉题并选择分支"""
+            nonlocal current_branch
+            try:
+                # 查找所有可能的分叉题
+                questions = driver.find_elements(By.CSS_SELECTOR, ".div_question, .field, .question")
+                if not questions:
+                    return None
+
+                for q in questions:
+                    if not q.is_displayed():
+                        continue
+
+                    try:
+                        # 获取问题ID和文本
+                        qid = q.get_attribute("id") or ""
+                        qid = qid.replace("div", "").replace("field", "").replace("question", "")
+                        if not qid:
+                            continue
+
+                        qtext = q.text.strip()[:50]  # 取前50字符
+
+                        # 检查是否是配置中的分叉题
+                        for branch_name, config in branch_configs.items():
+                            trigger_qid = str(config["trigger_question"])
+
+                            # 匹配题号或题目文本
+                            if trigger_qid == qid or trigger_qid in qtext:
+                                # 获取选项元素
+                                option_elements = []
+                                radios = q.find_elements(By.CSS_SELECTOR, "input[type='radio']")
+                                checkboxes = q.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
+
+                                if radios:
+                                    option_elements = radios
+                                    q_type = "radio"
+                                elif checkboxes:
+                                    option_elements = checkboxes
+                                    q_type = "checkbox"
+                                else:
+                                    continue
+
+                                # 获取选项文本
+                                option_texts = []
+                                for opt in option_elements:
+                                    try:
+                                        # 获取关联的label文本
+                                        label_id = opt.get_attribute("aria-labelledby")
+                                        if label_id:
+                                            label = driver.find_element(By.ID, label_id)
+                                            option_texts.append(label.text.strip())
+                                        else:
+                                            # 尝试下一个兄弟节点
+                                            label = driver.execute_script(
+                                                "return arguments[0].nextElementSibling;", opt)
+                                            if label and label.tag_name == "label":
+                                                option_texts.append(label.text.strip())
+                                            else:
+                                                option_texts.append(opt.get_attribute("value") or "选项")
+                                    except:
+                                        option_texts.append("选项")
+
+                                # 查找匹配的触发选项
+                                trigger_option = config["trigger_option"]
+                                for opt_idx, (opt, opt_text) in enumerate(zip(option_elements, option_texts)):
+                                    if trigger_option in opt_text:
+                                        # 滚动并点击选项
+                                        driver.execute_script(
+                                            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                            opt
+                                        )
+                                        time.sleep(0.2)
+
+                                        # 特殊点击处理
+                                        if opt.is_displayed() and opt.is_enabled():
+                                            try:
+                                                opt.click()
+                                            except:
+                                                driver.execute_script("arguments[0].click();", opt)
+
+                                        logging.info(f"选择分支选项: {trigger_option}")
+                                        time.sleep(1)
+
+                                        # 等待分支内容加载
+                                        self.wait_for_branch_questions(driver, branch_name)
+                                        return branch_name
+                    except Exception as e:
+                        logging.error(f"处理分叉题时出错: {str(e)}")
+            except Exception as e:
+                logging.error(f"分叉题处理异常: {str(e)}")
+            return None
+
+        def wait_for_branch_questions(branch_name):
+            """等待分支题目加载完成"""
+            nonlocal driver
+            # 获取分支的第一个题目文本作为等待标识
+            branch_config = branch_configs.get(branch_name, {})
+            if not branch_config.get("questions"):
+                return
+
+            first_qtext = list(branch_config["questions"].values())[0][:30]
+
+            try:
+                # 双重等待策略
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ".div_question, .field, .question"))
+                )
+
+                # 等待特定题目文本出现
+                WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, f"//*[contains(text(), '{first_qtext}')]"))
+                )
+            except:
+                logging.warning(f"等待分支题目超时，继续执行")
+
+            # 额外等待确保稳定性
+            time.sleep(1.5)
+
+        def parse_current_questions():
+            """解析当前页面的题目"""
+            nonlocal driver
+            try:
+                # 查找所有题目容器
+                question_containers = driver.find_elements(By.CSS_SELECTOR, ".div_question, .field, .question")
+                result = []
+
+                for container in question_containers:
+                    if not container.is_displayed():
+                        continue
+
+                    try:
+                        # 获取题目ID
+                        qid = container.get_attribute("id") or ""
+                        # 提取数字ID
+                        qid = ''.join(filter(str.isdigit, qid))
+                        if not qid:
+                            continue
+
+                        # 获取题目文本
+                        title_elements = container.find_elements(By.CSS_SELECTOR,
+                                                                 ".div_title_question, .field-label, .question-title")
+                        if not title_elements:
+                            # 尝试其他选择器
+                            title_elements = container.find_elements(By.CSS_SELECTOR, "h2, h3, h4, .title, .question-text")
+
+                        qtext = title_elements[0].text.strip() if title_elements else "未命名题目"
+
+                        # 获取选项 - 增强选择器
+                        options = []
+
+                        # 1. 尝试单选/多选选项
+                        choice_labels = container.find_elements(By.CSS_SELECTOR,
+                                                                ".ulradiocheck label, .wjx-option-label, .option-label")
+                        if choice_labels:
+                            options = [label.text.strip() for label in choice_labels if label.text.strip()]
+
+                        # 2. 尝试下拉框选项
+                        if not options:
+                            select_elements = container.find_elements(By.CSS_SELECTOR, "select")
+                            if select_elements:
+                                for select in select_elements:
+                                    options_elements = select.find_elements(By.CSS_SELECTOR, "option")
+                                    for opt in options_elements:
+                                        if opt.get_attribute("value") and not opt.get_attribute("disabled"):
+                                            options.append(opt.text.strip())
+
+                        # 3. 尝试填空提示文本
+                        if not options:
+                            inputs = container.find_elements(By.CSS_SELECTOR, "input[type='text'], textarea")
+                            options = [inp.get_attribute("placeholder") or "填空" for inp in inputs]
+
+                        # 4. 尝试量表题选项
+                        if not options:
+                            scale_items = container.find_elements(By.CSS_SELECTOR, ".scale-ul li, .rating-item")
+                            options = [item.text.strip() for item in scale_items if item.text.strip()]
+
+                        result.append({
+                            "id": qid,
+                            "text": qtext,
+                            "options": options
+                        })
+                    except Exception as e:
+                        logging.error(f"解析题目时出错: {str(e)}")
+                return result
+            except Exception as e:
+                logging.error(f"解析当前页面时出错: {str(e)}")
+                return []
+
+        def try_submit_on_no_question():
+            """当没有题目时尝试提交"""
+            try:
+                # 查找提交按钮
+                submit_buttons = driver.find_elements(By.CSS_SELECTOR,
+                                                      "#submit_button, #ctlNext, .submit-btn, button[type='submit']")
+                for btn in submit_buttons:
+                    if btn.is_displayed() and btn.is_enabled():
+                        driver.execute_script("arguments[0].scrollIntoView();", btn)
+                        time.sleep(0.5)
+                        btn.click()
+                        time.sleep(self.config["submit_delay"])
+                        logging.info("提交成功（无题目页）")
+                        return True
+
+                # 查找下一页按钮
+                next_buttons = driver.find_elements(By.CSS_SELECTOR,
+                                                    "#divNext a, .next-btn, a.next, button.next")
+                for btn in next_buttons:
+                    if btn.is_displayed() and btn.is_enabled():
+                        driver.execute_script("arguments[0].scrollIntoView();", btn)
+                        time.sleep(0.5)
+                        btn.click()
+                        time.sleep(self.config["page_load_delay"])
+                        return False
+            except:
+                pass
+            return False
+
+        # ================= 主填写循环 =================
+        while current_page <= max_pages and self.running:
+            if self.paused:
+                time.sleep(1)
+                continue
+
+            logging.info(f"正在处理第 {current_page} 页问卷")
+
+            # 更新进度显示
+            self.question_progress_var.set(0)
+            self.question_status_var.set(f"加载第{current_page}页...")
+            self.root.update_idletasks()
+
+            # 等待题目加载
+            try:
+                WebDriverWait(driver, 8).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, ".div_question, .field, .question, .survey-question"))
+                )
+            except TimeoutException:
+                logging.warning("页面加载超时，尝试刷新")
+                try:
+                    driver.refresh()
+                    time.sleep(3)
+                    continue
+                except:
+                    return False
+
+            # 处理分叉题（如果有）
+            if current_branch is None:
+                current_branch = handle_fork_question()
+                if current_branch:
+                    # 分支选择后需要重新开始本页处理
+                    logging.info(f"进入分支: {current_branch}")
+                    continue
+
+            # 获取当前配置（主配置或分支配置）
+            current_config = branch_configs.get(current_branch, {}) if current_branch else self.config
+            if not current_config:
+                current_config = self.config
+
+            # 解析当前页题目
+            questions_data = parse_current_questions()
+            if not questions_data:
+                if try_submit_on_no_question():
+                    return True
                 else:
-                    self.config[config_key][q_num] = probs
-                self.reload_question_settings()
-                return True, f"第{q_num}题概率已设置为: {probs}"
-        return False, f"未找到题目 {q_num} 的概率配置"
+                    current_page += 1
+                    continue
 
-    def get_param(self, key):
-        """获取参数值"""
-        if key in self.config:
-            return True, f"{key} = {self.config[key]}"
-        return False, f"参数 {key} 不存在"
+            # 使用页面内容hash判重
+            cur_page_signature = "|".join([q['text'][:30] for q in questions_data])
+            if cur_page_signature in processed_signatures:
+                logging.warning("检测到重复页面，尝试提交或翻页")
+                if try_submit_on_no_question():
+                    return True
+                else:
+                    current_page += 1
+                    continue
 
-    def get_question_type(self, q_num):
-        """获取题目类型"""
-        q_num = str(q_num)
-        type_map = {
-            "single_prob": "单选题",
-            "multiple_prob": "多选题",
-            "matrix_prob": "矩阵题",
-            "texts": "填空题",
-            "multiple_texts": "多项填空",
-            "reorder_prob": "排序题",
-            "droplist_prob": "下拉框",
-            "scale_prob": "量表题"
-        }
-        for key, name in type_map.items():
-            if q_num in self.config[key]:
-                return True, f"第{q_num}题是{name}"
-        return False, f"未找到题目 {q_num} 的类型"
+            processed_signatures.add(cur_page_signature)
+            total_questions = len(questions_data)
+            answered_questions = 0
 
-    def update_ui_from_config(self):
-        """根据配置更新UI控件"""
-        self.url_entry.delete(0, tk.END)
-        self.url_entry.insert(0, self.config["url"])
-        self.target_entry.delete(0, tk.END)
-        self.target_entry.insert(0, str(self.config["target_num"]))
-        self.ratio_scale.set(self.config["weixin_ratio"])
-        self.update_ratio_display()
-        self.reload_question_settings()
+            # 计算本页答题时间
+            total_time = random.randint(self.config["min_duration"], self.config["max_duration"])
+            avg_time_per_question = total_time / total_questions if total_questions > 0 else total_time
+            remaining_time = total_time
+
+            # 填写本页所有题目
+            for idx, q_data in enumerate(questions_data):
+                if not self.running:
+                    break
+
+                # 更新题目进度
+                answered_questions += 1
+                progress_percent = int((answered_questions / total_questions) * 100)
+                self.question_progress_var.set(progress_percent)
+                self.question_status_var.set(f"第{current_page}页 题目:{answered_questions}/{total_questions}")
+                self.root.update_idletasks()
+
+                qid = q_data["id"]
+                qtext = q_data["text"]
+                options = q_data["options"]
+
+                # 计算每题时间
+                if idx == total_questions - 1:
+                    question_time = remaining_time
+                else:
+                    question_time = min(
+                        random.uniform(avg_time_per_question * 0.5, avg_time_per_question * 1.5),
+                        max(0.1, remaining_time - (total_questions - idx - 1) * 0.5)
+                    )
+
+                question_start = time.time()
+
+                try:
+                    # 查找题目元素
+                    q_element = None
+                    try:
+                        q_element = driver.find_element(By.ID, f"div{qid}")
+                    except:
+                        try:
+                            q_element = driver.find_element(By.ID, f"field{qid}")
+                        except:
+                            try:
+                                # 通过题目文本查找
+                                q_element = driver.find_element(By.XPATH, f"//*[contains(text(), '{qtext[:20]}')]")
+                            except:
+                                pass
+
+                    if not q_element:
+                        logging.warning(f"未找到题目 {qid} 的元素，跳过")
+                        continue
+
+                    # 确定题目类型
+                    q_type = None
+                    config_key = None
+
+                    # 检查配置中存在的题型
+                    if qid in current_config.get("single_prob", {}):
+                        q_type = "single"
+                        config_key = "single_prob"
+                    elif qid in current_config.get("multiple_prob", {}):
+                        q_type = "multiple"
+                        config_key = "multiple_prob"
+                    elif qid in current_config.get("matrix_prob", {}):
+                        q_type = "matrix"
+                        config_key = "matrix_prob"
+                    elif qid in current_config.get("texts", {}):
+                        q_type = "text"
+                        config_key = "texts"
+                    elif qid in current_config.get("scale_prob", {}):
+                        q_type = "scale"
+                        config_key = "scale_prob"
+                    elif qid in current_config.get("droplist_prob", {}):
+                        q_type = "droplist"
+                        config_key = "droplist_prob"
+                    elif qid in current_config.get("reorder_prob", {}):
+                        q_type = "reorder"
+                        config_key = "reorder_prob"
+
+                    # 根据类型填写
+                    if q_type == "single":
+                        self.fill_single(driver, q_element, qid, config=current_config)
+                    elif q_type == "multiple":
+                        self.fill_multiple(driver, q_element, qid, config=current_config)
+                    elif q_type == "matrix":
+                        self.fill_matrix(driver, q_element, qid, config=current_config)
+                    elif q_type == "text":
+                        self.fill_text(driver, q_element, qid, config=current_config)
+                    elif q_type == "scale":
+                        self.fill_scale(driver, q_element, qid, config=current_config)
+                    elif q_type == "droplist":
+                        self.fill_droplist(driver, q_element, qid, config=current_config)
+                    elif q_type == "reorder":
+                        self.fill_reorder(driver, q_element, qid, config=current_config)
+                    else:
+                        # 自动检测并填写
+                        self.auto_detect_question_type(driver, q_element, qid, config=current_config)
+
+                    # 模拟人类阅读时间
+                    time_spent = time.time() - question_start
+                    if time_spent < question_time:
+                        time.sleep(question_time - time_spent)
+
+                    remaining_time -= (time.time() - question_start)
+
+                except Exception as e:
+                    logging.error(f"填写题目 {qid} 时出错: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+
+            # 尝试翻页
+            try:
+                # 查找下一页按钮
+                next_buttons = driver.find_elements(By.CSS_SELECTOR,
+                                                    "#divNext a, .next-btn, a.next, button.next")
+                for btn in next_buttons:
+                    if btn.is_displayed() and btn.is_enabled():
+                        driver.execute_script("arguments[0].scrollIntoView();", btn)
+                        time.sleep(0.5)
+                        btn.click()
+                        time.sleep(self.config["page_load_delay"])
+                        current_page += 1
+                        break
+                else:
+                    # 没有下一页，尝试提交
+                    submit_buttons = driver.find_elements(By.CSS_SELECTOR,
+                                                          "#submit_button, #ctlNext, .submit-btn, button[type='submit']")
+                    for btn in submit_buttons:
+                        if btn.is_displayed() and btn.is_enabled():
+                            driver.execute_script("arguments[0].scrollIntoView();", btn)
+                            time.sleep(0.5)
+                            btn.click()
+                            time.sleep(self.config["submit_delay"])
+                            logging.info("提交成功")
+                            return True
+
+                    # 既没有下一页也没有提交按钮
+                    logging.warning("未找到下一页或提交按钮，结束填写")
+                    break
+            except Exception as e:
+                logging.error(f"翻页/提交时出错: {str(e)}")
+                return False
+
+        # 最终提交尝试
+        try:
+            submit_buttons = driver.find_elements(By.CSS_SELECTOR,
+                                                  "#submit_button, #ctlNext, .submit-btn, button[type='submit']")
+            for btn in submit_buttons:
+                if btn.is_displayed() and btn.is_enabled():
+                    driver.execute_script("arguments[0].scrollIntoView();", btn)
+                    time.sleep(0.5)
+                    btn.click()
+                    time.sleep(self.config["submit_delay"])
+                    logging.info("最终提交成功")
+                    return True
+        except:
+            pass
+
+        logging.warning("问卷填写未完成")
+        return False
+
+
+
+
 
 
 if __name__ == "__main__":
