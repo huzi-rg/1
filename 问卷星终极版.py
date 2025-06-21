@@ -5211,29 +5211,68 @@ class WJXAutoFillApp:
 
         ttk.Button(dialog, text="保存更改", command=save_changes).pack(side=tk.BOTTOM, pady=10)
 
-    def create_branch_question_settings(self, frame, branch_config):
-        """为分支创建题目配置界面（类似主配置）"""
-        # 这里应该实现与主界面create_question_settings类似的逻辑
-        # 但使用branch_config中的数据
+    def update_branch_question_text(self, branch_config, qid, new_text):
+        """更新分支题目文本"""
+        branch_config["questions"][qid] = new_text
+        logging.info(f"分支题目 {qid} 文本更新为: {new_text}")
 
-        # 示例：添加题目文本配置
-        ttk.Label(frame, text="题目配置", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+    def update_branch_option_text(self, branch_config, qid, idx, new_text):
+        """更新分支选项文本"""
+        if qid in branch_config["options"] and idx < len(branch_config["options"][qid]):
+            branch_config["options"][qid][idx] = new_text
+            logging.info(f"分支题目 {qid} 选项 {idx + 1} 更新为: {new_text}")
 
-        for qid, qtext in branch_config["questions"].items():
-            row_frame = ttk.Frame(frame)
-            row_frame.pack(fill=tk.X, pady=2)
+    def update_branch_single_prob(self, branch_config, qid, idx, new_value):
+        """更新分支单选题概率"""
+        try:
+            value = float(new_value)
+            if idx is None:
+                branch_config["single_prob"][qid] = value
+            else:
+                if not isinstance(branch_config["single_prob"][qid], list):
+                    branch_config["single_prob"][qid] = []
+                if idx >= len(branch_config["single_prob"][qid]):
+                    branch_config["single_prob"][qid].extend([0.0] * (idx - len(branch_config["single_prob"][qid]) + 1))
+                branch_config["single_prob"][qid][idx] = value
+            logging.info(f"分支题目 {qid} 单选题概率更新")
+        except ValueError:
+            logging.error("无效的概率值")
 
-            ttk.Label(row_frame, text=f"题目{qid}:").pack(side=tk.LEFT, padx=5)
-            entry = ttk.Entry(row_frame, width=40)
-            entry.insert(0, qtext)
-            entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+    def update_branch_min_selection(self, branch_config, qid, new_value):
+        """更新分支多选题最小选择数"""
+        try:
+            value = int(new_value)
+            branch_config["multiple_prob"][qid]["min_selection"] = value
+            logging.info(f"分支题目 {qid} 最小选择数更新为: {value}")
+        except ValueError:
+            logging.error("无效的最小选择数")
 
-            # 保存更改的回调
-            entry.bind("<FocusOut>", lambda e, qid=qid: self.update_branch_question_text(
-                branch_config, qid, e.widget.get()
-            ))
+    def update_branch_max_selection(self, branch_config, qid, new_value):
+        """更新分支多选题最大选择数"""
+        try:
+            value = int(new_value)
+            branch_config["multiple_prob"][qid]["max_selection"] = value
+            logging.info(f"分支题目 {qid} 最大选择数更新为: {value}")
+        except ValueError:
+            logging.error("无效的最大选择数")
 
-        # 类似地添加选项配置、概率配置等
+    def update_branch_option_prob(self, branch_config, qid, idx, new_value):
+        """更新分支多选题选项概率"""
+        try:
+            value = float(new_value)
+            if idx >= len(branch_config["multiple_prob"][qid]["prob"]):
+                branch_config["multiple_prob"][qid]["prob"].extend(
+                    [0.0] * (idx - len(branch_config["multiple_prob"][qid]["prob"]) + 1))
+            branch_config["multiple_prob"][qid]["prob"][idx] = value
+            logging.info(f"分支题目 {qid} 选项 {idx + 1} 概率更新为: {value}")
+        except ValueError:
+            logging.error("无效的概率值")
+
+    def save_branch_config(self, branch_config):
+        """保存分支配置"""
+        # 这里可以添加保存到文件或数据库的逻辑
+        messagebox.showinfo("成功", "分支配置已保存")
+        logging.info("分支配置已保存")
 
     def update_branch_combobox(self):
         """更新分支下拉框的选项"""
@@ -5847,7 +5886,15 @@ class WJXAutoFillApp:
 
 
 
-
+    def update_branch_question_text(self, event, qid_entry, text_entry):
+        """当分支题号变化时更新题目文本"""
+        qid = qid_entry.get().strip()
+        if qid in self.config["question_texts"]:
+            text_entry.delete(0, tk.END)
+            text_entry.insert(0, self.config["question_texts"][qid])
+        else:
+            text_entry.delete(0, tk.END)
+            text_entry.insert(0, "题目不存在")
 
 
 if __name__ == "__main__":
