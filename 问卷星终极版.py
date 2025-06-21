@@ -96,6 +96,20 @@ DEFAULT_CONFIG = {
         "6": [0.2, 0.3, 0.5],  # 每行选项的选择概率
         "7": -1  # -1表示随机选择
     },
+    "branch_rules": {
+        # 例：第5题，选“是”进入branch_yes，选“否”进入branch_no
+        "5": {"是": "branch_yes", "否": "branch_no"}
+    },
+    "branches": {
+        "branch_yes": {
+            # 这里配置“是”分支后续页面的所有题型设置（结构同主配置）
+        },
+        "branch_no": {
+            # 这里配置“否”分支后续页面的所有题型设置
+        }
+    },
+
+
 
     # 量表题概率配置
     "scale_prob": {
@@ -1336,9 +1350,44 @@ class WJXAutoFillApp:
 
         return False
 
-    def create_question_settings(self):
-        """创建题型设置界面 - 推荐每次完整重建Canvas, Frame, Notebook等所有结构"""
-        # 创建滚动框架
+    def create_question_settings(self, config=None):
+        """
+        创建题型设置界面
+        支持主流程和分支配置（config参数决定当前操作的是哪个配置对象）
+        """
+        import tkinter as tk
+        from tkinter import ttk
+
+        # 1. 选择当前使用的配置（主流程或某分支）
+        if config is None:
+            config = self.config  # 默认主配置
+
+        # 2. 清空原有内容（如果多次调用）
+        for widget in self.question_frame.winfo_children():
+            widget.destroy()
+
+        # 3. 分支切换区（主流程/分支）
+        switch_frame = ttk.Frame(self.question_frame)
+        switch_frame.pack(fill=tk.X, pady=5)
+        branch_options = ["主流程"] + list(self.config.get("branches", {}).keys())
+        if not hasattr(self, "branch_var"):
+            self.branch_var = tk.StringVar(value="主流程")
+        branch_menu = ttk.Combobox(switch_frame, values=branch_options, textvariable=self.branch_var, state="readonly",
+                                   width=20)
+        ttk.Label(switch_frame, text="当前配置：").pack(side=tk.LEFT, padx=(8, 2))
+        branch_menu.pack(side=tk.LEFT, padx=5)
+
+        def on_branch_change(event=None):
+            # 切换分支，重建界面
+            b = self.branch_var.get()
+            if b == "主流程":
+                self.create_question_settings(self.config)
+            else:
+                self.create_question_settings(self.config["branches"][b])
+
+        branch_menu.bind("<<ComboboxSelected>>", on_branch_change)
+
+        # 4. 创建滚动框架
         self.question_canvas = tk.Canvas(self.question_frame)
         self.question_scrollbar = ttk.Scrollbar(self.question_frame, orient="vertical",
                                                 command=self.question_canvas.yview)
@@ -1351,13 +1400,13 @@ class WJXAutoFillApp:
         self.question_canvas.configure(yscrollcommand=self.question_scrollbar.set)
         self.question_scrollbar.pack(side="right", fill="y")
         self.question_canvas.pack(side="left", fill="both", expand=True)
-        self.bind_mousewheel_to_scrollbar(self.question_canvas)  # 添加这行绑定鼠标滚轮
+        self.bind_mousewheel_to_scrollbar(self.question_canvas)
 
-        # 创建Notebook（每次都新建）
+        # 5. 创建Notebook（每次都新建）
         self.question_notebook = ttk.Notebook(self.scrollable_question_frame)
         self.question_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # 题型tab配置
+        # 6. 题型tab配置（必须用当前config参数）
         question_types = [
             ('single_prob', "单选题", self.create_single_settings),
             ('multiple_prob', "多选题", self.create_multi_settings),
@@ -1369,7 +1418,7 @@ class WJXAutoFillApp:
             ('scale_prob', "量表题", self.create_scale_settings)
         ]
         for config_key, label_text, create_func in question_types:
-            count = len(self.config[config_key])
+            count = len(config.get(config_key, {}))
             frame = ttk.Frame(self.question_notebook)
             self.question_notebook.add(frame, text=f"{label_text}({count})")
             desc_frame = ttk.Frame(frame)
@@ -1378,16 +1427,14 @@ class WJXAutoFillApp:
                 ttk.Label(desc_frame, text=f"暂无{label_text}题目", font=("Arial", 10, "italic"),
                           foreground="gray").pack(pady=20)
             else:
-                create_func(frame)
+                # 7. 让所有create_xxx_settings方法支持config参数
+                create_func(frame, config=config)
 
-        # 添加提示和手动修正按钮
+        # 8. 添加提示和手动修正按钮
         tip_frame = ttk.Frame(self.scrollable_question_frame)
         tip_frame.pack(fill=tk.X, pady=10)
-
-        # 提示标签（保留）
         ttk.Label(tip_frame, text="提示: 鼠标悬停在题号上可查看题目内容",
                   style='Warning.TLabel').pack(side=tk.LEFT, padx=5)
-
 
         self.scrollable_question_frame.update_idletasks()
         self.question_canvas.configure(scrollregion=self.question_canvas.bbox("all"))
@@ -3014,8 +3061,8 @@ class WJXAutoFillApp:
 
     def fill_survey(self, driver):
         """
-        改进版：填写问卷，题目进度条按“实际可见题数”显示，避免统计错误，防死循环/多处理第一页。
-        修正版：无题目时尝试提交按钮！
+        支持分支跳转的问卷填写主流程。
+        根据分支点(如第5题)选择，自动切换到对应分支的题型配置，保证后续页面填写与页面结构一致。
         """
         import random
         import time
@@ -3026,8 +3073,12 @@ class WJXAutoFillApp:
         from selenium.common.exceptions import TimeoutException, WebDriverException
 
         current_page = 1
-        max_pages = 20  # 设置一个合理的最大页数限制
-        processed_signatures = set()  # 用于判重，多页URL不变时内容不同也能识别
+        max_pages = 20  # 设置最大页数限制
+        processed_signatures = set()  # 用于判重
+        already_in_branch = False
+        branch_name = None
+        branch_config = None
+        branch_rules = self.config.get("branch_rules", {})
 
         def try_submit_on_no_question(driver):
             """
@@ -3045,7 +3096,6 @@ class WJXAutoFillApp:
                     for elem in elements:
                         if elem.is_displayed():
                             text = elem.text or elem.get_attribute("value") or ""
-                            # 只要有“提交”、“完成”、“交卷”等字样就判定为提交按钮
                             if any(word in text for word in ["提交", "完成", "交卷", "确定", "submit"]):
                                 try:
                                     elem.click()
@@ -3084,13 +3134,12 @@ class WJXAutoFillApp:
             ]
             total_questions = len(questions)
 
-            # ==== 用页面内容hash判重 ====
+            # 用页面内容hash判重
             cur_page_signature = "|".join([q.text.strip()[:30] for q in questions]) if questions else driver.current_url
             if cur_page_signature in processed_signatures:
                 logging.warning("检测到重复页面，跳出循环避免死循环")
                 break
             processed_signatures.add(cur_page_signature)
-            # ==== END ====
 
             # 如果没有题目，优先尝试提交
             if total_questions == 0:
@@ -3138,33 +3187,55 @@ class WJXAutoFillApp:
                 question_start = time.time()
 
                 try:
+                    # 判断当前是否进入分支（只处理一次）
+                    q_num_for_branch = q_id.replace("div", "")
+                    # 只在分支点且尚未切换时处理
+                    if (not already_in_branch) and (q_num_for_branch in branch_rules):
+                        # 分支点题型必须是单选
+                        # 获取选项文本
+                        selected_option = self.fill_single(driver, q, q_num_for_branch, get_option_text=True)
+                        branch_name = branch_rules[q_num_for_branch].get(selected_option)
+                        if branch_name and "branches" in self.config and branch_name in self.config["branches"]:
+                            already_in_branch = True
+                            branch_config = self.config["branches"][branch_name]
+                            logging.info(
+                                f"分支跳转：第{q_num_for_branch}题选择『{selected_option}』，进入分支『{branch_name}』")
+                        # 也要加到already_filled
+                        already_filled.add(q_id)
+                        # 跳过后续通用填写
+                        continue
+
+                    # 当前填写用哪个配置
+                    this_config = branch_config if already_in_branch and branch_config else self.config
+
+                    # 判断题号
                     q_type = q.get_attribute("type")
                     q_num = q_id.replace("div", "") if q_id else str(current_question)
 
-                    # 主动填写
+                    # 主动填写（用分支/主配置）
                     if q_type == "1" or q_type == "2":
-                        self.fill_text(driver, q, q_num)
+                        self.fill_text(driver, q, q_num, config=this_config)
                     elif q_type == "3":
-                        self.fill_single(driver, q, q_num)
+                        self.fill_single(driver, q, q_num, config=this_config)
                     elif q_type == "4":
-                        self.fill_multiple(driver, q, q_num)
+                        self.fill_multiple(driver, q, q_num, config=this_config)
                     elif q_type == "5":
-                        self.fill_scale(driver, q, q_num)
+                        self.fill_scale(driver, q, q_num, config=this_config)
                     elif q_type == "6":
-                        self.fill_matrix(driver, q, q_num)
+                        self.fill_matrix(driver, q, q_num, config=this_config)
                     elif q_type == "7":
-                        self.fill_droplist(driver, q, q_num)
+                        self.fill_droplist(driver, q, q_num, config=this_config)
                     elif q_type == "11":
-                        self.fill_reorder(driver, q, q_num)
+                        self.fill_reorder(driver, q, q_num, config=this_config)
                     else:
-                        self.auto_detect_question_type(driver, q, q_num)
+                        self.auto_detect_question_type(driver, q, q_num, config=this_config)
 
                     # 填写后检测
                     if self.is_filled(q):
                         already_filled.add(q_id)
                     else:
-                        if q_type != "11":  # 排序题不需要重试
-                            self.auto_detect_question_type(driver, q, q_num)
+                        if q_type != "11":
+                            self.auto_detect_question_type(driver, q, q_num, config=this_config)
                             if self.is_filled(q):
                                 already_filled.add(q_id)
 
@@ -3210,7 +3281,9 @@ class WJXAutoFillApp:
                 if not self.is_filled(q):
                     q_num = q_id.replace("div", "") if q_id else ""
                     try:
-                        self.auto_detect_question_type(driver, q, q_num)
+                        # 用当前分支配置
+                        this_config = branch_config if already_in_branch and branch_config else self.config
+                        self.auto_detect_question_type(driver, q, q_num, config=this_config)
                         if self.is_filled(q):
                             already_filled.add(q_id)
                     except WebDriverException as e:
@@ -3235,7 +3308,6 @@ class WJXAutoFillApp:
             submit_button = driver.find_elements(By.CSS_SELECTOR,
                                                  "#submit_button, #ctlNext, input[value*='提交'], a.submitbutton, #btnSubmit")
             if not submit_button:
-                # 再次尝试无题目提交
                 if try_submit_on_no_question(driver):
                     logging.info("最后一页无题目已成功提交")
                     return True
@@ -3246,6 +3318,7 @@ class WJXAutoFillApp:
 
             logging.info("没有下一页，准备提交问卷")
             return self.submit_survey(driver)
+
 
     def auto_detect_question_type(self, driver, question, q_num):
         """
@@ -3333,12 +3406,17 @@ class WJXAutoFillApp:
             import logging
             logging.error(f"自动检测题目类型时出错: {str(e)}")
 
-    def fill_text(self, driver, question, q_num):
-        """填空题/多项填空题自动填写 - 优化日志版"""
+    def fill_text(self, driver, question, q_num, config=None):
+        """
+        填空题/多项填空题自动填写 - 优化日志版，支持分支配置（config参数）
+        """
         import random
         import time
         import logging
         from selenium.webdriver.common.by import By
+
+        if config is None:
+            config = self.config
 
         q_key = str(q_num)
         # 获取所有可填写的控件
@@ -3356,14 +3434,14 @@ class WJXAutoFillApp:
 
         # ==== AI自动答题优先 ====
         answers = []
-        ai_enabled = self.config.get("ai_fill_enabled", False)
-        api_key = self.config.get("openai_api_key", "")
-        prompt_template = self.config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}")
-        question_text = self.config.get("question_texts", {}).get(q_key, "")
+        ai_enabled = config.get("ai_fill_enabled", False)
+        api_key = config.get("openai_api_key", "")
+        prompt_template = config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}")
+        question_text = config.get("question_texts", {}).get(q_key, "")
 
         if ai_enabled and api_key and question_text:
             try:
-                service = self.config.get("ai_service", "质谱清言")
+                service = config.get("ai_service", "质谱清言")
                 if service == "OpenAI":
                     # 使用OpenAI接口
                     ai_answer = self.ai_generate_answer(question_text, api_key, prompt_template)
@@ -3376,16 +3454,16 @@ class WJXAutoFillApp:
                 logging.warning(f"AI答题失败: {str(e)}")
                 answers = [self.get_identity_answer("", question_text)] * len(all_fields)
 
-        elif q_key in self.config.get("multiple_texts", {}):
-            ans_lists = self.config["multiple_texts"][q_key]
+        elif q_key in config.get("multiple_texts", {}):
+            ans_lists = config["multiple_texts"][q_key]
             for i in range(len(all_fields)):
                 if i < len(ans_lists) and ans_lists[i]:
                     chosen = random.choice(ans_lists[i])
                     answers.append(chosen)
                 else:
                     answers.append("自动填写内容")
-        elif q_key in self.config.get("texts", {}):
-            ans_list = self.config["texts"][q_key]
+        elif q_key in config.get("texts", {}):
+            ans_list = config["texts"][q_key]
             for i in range(len(all_fields)):
                 chosen = random.choice(ans_list) if ans_list else "自动填写内容"
                 answers.append(chosen)
@@ -3430,7 +3508,7 @@ class WJXAutoFillApp:
                 except Exception:
                     pass
 
-        self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
         logging.info(f"已填写题目 {q_num}")
 
     def repair_required_questions(self, driver):
@@ -3864,14 +3942,15 @@ class WJXAutoFillApp:
         print("达到最大重试次数，提交失败")
         return False
 
-    def fill_droplist(self, driver, question, q_num):
+    def fill_droplist(self, driver, question, q_num, config=None):
         """
-        增强版下拉框题目填写方法 - 支持原生select和自定义下拉框
+        增强版下拉框题目填写方法 - 支持原生select和自定义下拉框，支持分支配置
         """
         import random
         import time
         import logging
         import datetime
+        import numpy as np
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import Select
         from selenium.webdriver.common.action_chains import ActionChains
@@ -3879,11 +3958,14 @@ class WJXAutoFillApp:
                                                 ElementNotInteractableException,
                                                 StaleElementReferenceException)
 
+        if config is None:
+            config = self.config
+
         logging.info(f"开始处理下拉框题目 {q_num}")
         try:
             q_key = str(q_num)
             # 获取配置的概率
-            probs = self.config.get("droplist_prob", {}).get(q_key, None)
+            probs = config.get("droplist_prob", {}).get(q_key, None)
 
             # 尝试定位原生select元素
             try:
@@ -3964,7 +4046,7 @@ class WJXAutoFillApp:
                             driver.execute_script(js, select_elem)
                             logging.info("使用JS设置下拉框值")
 
-                self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
+                self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
                 return
             except NoSuchElementException:
                 logging.info("未找到原生select元素，尝试自定义下拉框")
@@ -4078,7 +4160,7 @@ class WJXAutoFillApp:
                     logging.warning(f"点击选项失败: {str(e)}，使用JS点击")
                     driver.execute_script("arguments[0].click();", selected)
 
-                self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
+                self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
                 return
             except Exception as e:
                 logging.error(f"自定义下拉框处理失败: {str(e)}")
@@ -4087,7 +4169,7 @@ class WJXAutoFillApp:
             try:
                 logging.info("尝试最终方案：JS设置值")
                 # 获取选项文本列表
-                option_texts = self.config.get("option_texts", {}).get(q_key, [])
+                option_texts = config.get("option_texts", {}).get(q_key, [])
                 if not option_texts:
                     logging.warning("无选项文本配置")
                     return
@@ -4131,7 +4213,7 @@ class WJXAutoFillApp:
                     driver.execute_script(js, sel)
                     logging.info("执行JS设置下拉框值")
 
-                self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
+                self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
             except Exception as e:
                 logging.error(f"最终JS设置下拉框值失败: {str(e)}")
 
@@ -4278,11 +4360,17 @@ class WJXAutoFillApp:
         alert.update()
         alert.attributes('-topmost', False)
 
-    def create_multiple_text_settings(self, frame):
+    def create_multiple_text_settings(self, frame, config=None):
         """
         多项填空题配置tab页——每空一个entry，支持逗号分隔多个可选答案。
-        保存时遍历 self.multiple_text_entries，按顺序写入 self.config["multiple_texts"]。
+        保存时遍历 self.multiple_text_entries，按顺序写入 config["multiple_texts"]。
         """
+        import tkinter as tk
+        from tkinter import ttk
+
+        if config is None:
+            config = self.config
+
         padx, pady = 4, 2
         desc_frame = ttk.LabelFrame(frame, text="多项填空配置说明")
         desc_frame.pack(fill=tk.X, padx=padx, pady=pady)
@@ -4293,60 +4381,66 @@ class WJXAutoFillApp:
         table_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         headers = ["题号", "题目预览", "每空答案配置"]
         for col, header in enumerate(headers):
-            ttk.Label(table_frame, text=header, font=("Arial", 9, "bold")).grid(row=0, column=col, padx=padx, pady=pady,
-                                                                                sticky=tk.W)
+            ttk.Label(table_frame, text=header, font=("Arial", 9, "bold")).grid(
+                row=0, column=col, padx=padx, pady=pady, sticky=tk.W
+            )
 
         self.multiple_text_entries = []  # 清空，防止重复累积
 
         # 遍历所有多项填空题
-        for row_idx, (q_num, answers_list) in enumerate(self.config.get("multiple_texts", {}).items(), start=1):
+        for row_idx, (q_num, answers_list) in enumerate(config.get("multiple_texts", {}).items(), start=1):
             base_row = row_idx * 2
-            q_text = self.config.get("question_texts", {}).get(q_num, f"多项填空 {q_num}")
-        空数 = len(answers_list)
-        ttk.Label(table_frame, text=f"第{q_num}题", font=("Arial", 10)).grid(row=base_row, column=0, padx=padx,
-                                                                             pady=pady, sticky=tk.NW)
-        preview_text = q_text
-        ttk.Label(table_frame, text=preview_text, width=20, anchor="w", wraplength=300).grid(row=base_row, column=1,
-                                                                                             padx=padx, pady=pady,
-                                                                                             sticky=tk.NW)
-        answer_line = ttk.Frame(table_frame)
-        answer_line.grid(row=base_row, column=2, padx=padx, pady=pady, sticky=tk.W)
-        entry_row = []
-        for i in range(空数):
-            entry = ttk.Entry(answer_line, width=18)
-            # 预填已有内容
-            answer_str = ", ".join(answers_list[i]) if i < len(answers_list) else ""
-            entry.insert(0, answer_str)
-            entry.pack(side=tk.LEFT, padx=(0, 2))
-            entry_row.append(entry)
-        self.multiple_text_entries.append(entry_row)
-        # 重置按钮
-        reset_btn = ttk.Button(answer_line, text="重置", width=6,
-                               command=lambda e=entry_row: [ent.delete(0, tk.END) or ent.insert(0, "示例答案") for ent
-                                                            in e])
-        reset_btn.pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Separator(table_frame, orient='horizontal').grid(
-            row=base_row + 1, column=0, columnspan=3, sticky='ew', pady=10
-        )
+            q_text = config.get("question_texts", {}).get(q_num, f"多项填空 {q_num}")
+            空数 = len(answers_list)
+            ttk.Label(table_frame, text=f"第{q_num}题", font=("Arial", 10)).grid(
+                row=base_row, column=0, padx=padx, pady=pady, sticky=tk.NW
+            )
+            preview_text = q_text
+            ttk.Label(table_frame, text=preview_text, width=20, anchor="w", wraplength=300).grid(
+                row=base_row, column=1, padx=padx, pady=pady, sticky=tk.NW
+            )
+            answer_line = ttk.Frame(table_frame)
+            answer_line.grid(row=base_row, column=2, padx=padx, pady=pady, sticky=tk.W)
+            entry_row = []
+            for i in range(空数):
+                entry = ttk.Entry(answer_line, width=18)
+                # 预填已有内容
+                answer_str = ", ".join(answers_list[i]) if i < len(answers_list) else ""
+                entry.insert(0, answer_str)
+                entry.pack(side=tk.LEFT, padx=(0, 2))
+                entry_row.append(entry)
+            self.multiple_text_entries.append(entry_row)
+            # 重置按钮
+            reset_btn = ttk.Button(answer_line, text="重置", width=6,
+                                   command=lambda e=entry_row: [ent.delete(0, tk.END) or ent.insert(0, "示例答案") for
+                                                                ent in e])
+            reset_btn.pack(side=tk.LEFT, padx=(6, 0))
+            ttk.Separator(table_frame, orient='horizontal').grid(
+                row=base_row + 1, column=0, columnspan=3, sticky='ew', pady=10
+            )
 
-    def fill_single(self, driver, question, q_num):
+    def fill_single(self, driver, question, q_num, config=None, get_option_text=False):
         """
         单选题自动填写，兼容新版问卷星自定义UI，优先点击label或外层div，保证前端能识别选中。
         并自动填写被选中选项关联的弹出文本框（AI优先）。
+        增加get_option_text参数，用于返回被选中的label文本。
         """
-        import random, time
+        import random
+        import time
         from selenium.webdriver.common.by import By
         import logging
+        import numpy as np
 
-        # 1. 先找所有可见input[type=radio]
+        if config is None:
+            config = self.config
+
         radios = question.find_elements(By.CSS_SELECTOR, "input[type='radio']")
         if not radios:
-            return
+            return ""
 
         q_key = str(q_num)
-        probs = self.config.get("single_prob", {}).get(q_key, -1)
+        probs = config.get("single_prob", {}).get(q_key, -1)
 
-        # 2. 确定要选哪个
         if probs == -1:
             selected_idx = random.randint(0, len(radios) - 1)
         elif isinstance(probs, list):
@@ -4362,22 +4456,25 @@ class WJXAutoFillApp:
 
         selected_radio = radios[selected_idx]
 
-        # 3. 优先找label[for=id]，否则点父节点，最后才点input本身
         input_id = selected_radio.get_attribute("id")
         label = None
+        selected_text = ""
         if input_id:
             try:
                 label = question.find_element(By.CSS_SELECTOR, f"label[for='{input_id}']")
+                selected_text = label.text.strip()
             except:
                 label = None
         if not label:
             try:
                 label = selected_radio.find_element(By.XPATH, "./..")
+                selected_text = label.text.strip()
             except:
                 label = None
         if not label:
             try:
                 label = selected_radio.find_element(By.XPATH, "../..")
+                selected_text = label.text.strip()
             except:
                 label = None
 
@@ -4393,14 +4490,12 @@ class WJXAutoFillApp:
                 except Exception:
                     continue
 
-        # 强制触发change/input事件
         try:
             driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", selected_radio)
             driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", selected_radio)
         except Exception:
             pass
 
-        # 检查input是否变为选中，否则再强制用JS选中并触发事件
         try:
             is_checked = selected_radio.is_selected() or selected_radio.get_attribute("checked")
             if not is_checked:
@@ -4412,28 +4507,34 @@ class WJXAutoFillApp:
         except Exception:
             pass
 
-        # ==== 新增：点选后自动填写该题下所有空白文本框（AI优先） ====
-        time.sleep(0.5)  # 等待弹框动画
+        time.sleep(0.5)
         self.fill_associated_textbox(
             driver, question, selected_radio,
-            ai_enabled=self.config.get("ai_fill_enabled", False),
-            ai_api_key=self.config.get("openai_api_key", ""),
-            ai_prompt_template=self.config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}"),
-            question_text=self.config.get("question_texts", {}).get(str(q_num), "")
+            ai_enabled=config.get("ai_fill_enabled", False),
+            ai_api_key=config.get("openai_api_key", ""),
+            ai_prompt_template=config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}"),
+            question_text=config.get("question_texts", {}).get(str(q_num), "")
         )
 
-        self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
+        if get_option_text:
+            return selected_text
+        return
 
-    def fill_multiple(self, driver, question, q_num):
+    def fill_multiple(self, driver, question, q_num, config=None):
         """
-        问卷星多选题自动填写（增强版）：优先点击label/div，自动填写所有被选中选项关联的文本框（不仅仅是“其他”），
+        多选题自动填写，支持分支配置。优先点击label/div，自动填写所有被选中选项关联的文本框（不仅仅是“其他”），
         保证最少/最多选择数严格生效。AI自动填补充文本。
         """
         import random
         import time
         from selenium.webdriver.common.by import By
+        import logging
+        import numpy as np
 
-        # 1. 查找所有checkbox选项
+        if config is None:
+            config = self.config
+
         checkboxes = question.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
         option_labels = []
         for box in checkboxes:
@@ -4455,43 +4556,36 @@ class WJXAutoFillApp:
             option_labels.append(label_text or "未知")
 
         if not checkboxes:
-            import logging
             logging.warning(f"多选题{q_num}未找到选项，跳过")
             return
 
-        # 2. 读取配置并修正概率长度
         q_key = str(q_num)
-        conf = self.config.get("multiple_prob", {}).get(q_key, {"prob": [50] * len(checkboxes), "min_selection": 1,
-                                                                "max_selection": len(checkboxes)})
+        conf = config.get("multiple_prob", {}).get(q_key, {"prob": [50] * len(checkboxes), "min_selection": 1,
+                                                           "max_selection": len(checkboxes)})
         probs = conf.get("prob", [50] * len(checkboxes))
         min_selection = conf.get("min_selection", 1)
         max_selection = conf.get("max_selection", len(checkboxes))
         if max_selection > len(checkboxes): max_selection = len(checkboxes)
         if min_selection > max_selection: min_selection = max_selection
-        # 修正概率长度
         probs = probs[:len(checkboxes)] if len(probs) > len(checkboxes) else probs + [50] * (
-                len(checkboxes) - len(probs))
+                    len(checkboxes) - len(probs))
 
-        # 3. 选项选择逻辑(严格保证最少和最多选择数)
         must_indices = [i for i, prob in enumerate(probs) if prob >= 100]
         selected = set(must_indices)
         for i, prob in enumerate(probs):
             if i not in selected and random.random() * 100 < prob:
                 selected.add(i)
-        # 补足最少选择数
         while len(selected) < min_selection:
             left = [i for i in range(len(checkboxes)) if i not in selected]
             if not left:
                 break
             selected.add(random.choice(left))
-        # 裁剪到最大数
         while len(selected) > max_selection:
             removable = [i for i in selected if i not in must_indices]
             if not removable:
                 break
             selected.remove(random.choice(removable))
 
-        # 4. 勾选选项（优先点击label/div，避免element not interactable）
         for idx in selected:
             try:
                 if idx >= len(checkboxes):
@@ -4499,19 +4593,16 @@ class WJXAutoFillApp:
                 input_box = checkboxes[idx]
                 label = None
                 input_id = input_box.get_attribute("id")
-                # 1) label[for=id]
                 if input_id:
                     try:
                         label = question.find_element(By.CSS_SELECTOR, f"label[for='{input_id}']")
                     except:
                         label = None
-                # 2) 兄弟span
                 if not label:
                     try:
                         label = input_box.find_element(By.XPATH, "./following-sibling::*[1]")
                     except:
                         label = None
-                # 3) 父div（如.ui-checkbox、option等）
                 if not label:
                     try:
                         label = input_box.find_element(By.XPATH, "../..")
@@ -4537,34 +4628,42 @@ class WJXAutoFillApp:
                     except Exception:
                         pass
                 if not clicked:
-                    import logging
                     logging.warning(f"多选题第{q_num}题第{idx + 1}选项无法点击，已跳过")
                     continue
 
-                # ==== 自动填写被选中选项下方的所有文本框（AI优先） ====
                 self.fill_associated_textbox(
                     driver, question, input_box,
-                    ai_enabled=self.config.get("ai_fill_enabled", False),
-                    ai_api_key=self.config.get("openai_api_key", ""),
-                    ai_prompt_template=self.config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}"),
-                    question_text=self.config.get("question_texts", {}).get(str(q_num), "")
+                    ai_enabled=config.get("ai_fill_enabled", False),
+                    ai_api_key=config.get("openai_api_key", ""),
+                    ai_prompt_template=config.get("ai_prompt_template", "请用简洁、自然的中文回答：{question}"),
+                    question_text=config.get("question_texts", {}).get(str(q_num), "")
                 )
             except Exception as e:
-                import logging
                 logging.warning(f"选择选项时出错: {str(e)}")
                 continue
 
-        self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
+        self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
 
-    def fill_matrix(self, driver, question, q_num):
-        """填写矩阵题"""
+    def fill_matrix(self, driver, question, q_num, config=None):
+        """
+        填写矩阵题，支持分支配置
+        """
+        import random
+        import time
+        import logging
+        from selenium.webdriver.common.by import By
+        import numpy as np
+
+        if config is None:
+            config = self.config
+
         try:
             rows = question.find_elements(By.CSS_SELECTOR, f"#divRefTab{q_num} tbody tr")
             if not rows:
                 return
 
             q_key = str(q_num)
-            probs = self.config["matrix_prob"].get(q_num, -1)
+            probs = config.get("matrix_prob", {}).get(q_num, -1)
 
             for i, row in enumerate(rows[1:], 1):  # 跳过表头行
                 cols = row.find_elements(By.CSS_SELECTOR, "td")
@@ -4574,17 +4673,15 @@ class WJXAutoFillApp:
                 if probs == -1:  # 随机选择
                     selected_col = random.randint(1, len(cols) - 1)
                 elif isinstance(probs, list):  # 按概率选择
-                    # 确保概率列表长度匹配
                     col_probs = probs[:len(cols) - 1] if len(probs) > len(cols) - 1 else probs + [0] * (
                             len(cols) - 1 - len(probs))
-                    # 归一化概率
                     total = sum(col_probs)
                     if total > 0:
                         col_probs = [p / total for p in col_probs]
                         selected_col = np.random.choice(range(1, len(cols)), p=col_probs)
                     else:
                         selected_col = random.randint(1, len(cols) - 1)
-                else:  # 默认随机
+                else:
                     selected_col = random.randint(1, len(cols) - 1)
 
                 try:
@@ -4593,29 +4690,37 @@ class WJXAutoFillApp:
                     time.sleep(0.1)
                     cols[selected_col].click()
                 except:
-                    # 使用JavaScript点击
                     driver.execute_script("arguments[0].click();", cols[selected_col])
 
-                self.random_delay(0.1, 0.3)  # 每行选择后短暂延迟
+                self.random_delay(0.1, 0.3)
 
-            self.random_delay(*self.config["per_question_delay"])
+            self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
         except Exception as e:
             logging.error(f"填写矩阵题 {q_num} 时出错: {str(e)}")
 
-    def fill_scale(self, driver, question, q_num):
-        """填写量表题"""
+    def fill_scale(self, driver, question, q_num, config=None):
+        """
+        填写量表题，支持分支配置
+        """
+        import random
+        import time
+        import logging
+        from selenium.webdriver.common.by import By
+        import numpy as np
+
+        if config is None:
+            config = self.config
+
         try:
             options = question.find_elements(By.CSS_SELECTOR, f"#div{q_num} .scale-ul li")
             if not options:
                 return
 
             q_key = str(q_num)
-            probs = self.config["scale_prob"].get(q_key, [1] * len(options))
+            probs = config.get("scale_prob", {}).get(q_key, [1] * len(options))
 
-            # 确保概率列表长度匹配
             probs = probs[:len(options)] if len(probs) > len(options) else probs + [1] * (len(options) - len(probs))
 
-            # 归一化概率
             total = sum(probs)
             if total > 0:
                 probs = [p / total for p in probs]
@@ -4630,17 +4735,23 @@ class WJXAutoFillApp:
             except:
                 driver.execute_script("arguments[0].click();", selected)
 
-            self.random_delay(*self.config["per_question_delay"])
+            self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
         except Exception as e:
             logging.error(f"填写量表题 {q_num} 时出错: {str(e)}")
 
-    def fill_reorder(self, driver, question, q_num):
+    def fill_reorder(self, driver, question, q_num, config=None):
         """
         问卷星排序题专用：只点击一轮，每个li只点一次，顺序随机，绝不补点。
-        选项查找范围更广，未找到时输出结构，提升成功率。
+        支持分支配置。
         """
         import random
         import time
+        import logging
+        from selenium.webdriver.common.by import By
+
+        if config is None:
+            config = self.config
+
         try:
             lis = question.find_elements(
                 By.CSS_SELECTOR,
@@ -4648,7 +4759,6 @@ class WJXAutoFillApp:
             )
             lis = [li for li in lis if li.is_displayed() and li.is_enabled()]
             if not lis:
-                import logging
                 logging.warning(f"排序题 {q_num} 未找到选项，结构为: {question.get_attribute('outerHTML')}")
                 return
             idxs = list(range(len(lis)))
@@ -4661,19 +4771,10 @@ class WJXAutoFillApp:
                     try:
                         driver.execute_script("arguments[0].click();", lis[idx])
                     except Exception:
-                        import logging
                         logging.warning(f"排序题 {q_num} 第{idx + 1}项点击失败: {e}")
-            # 只做一轮，绝不补点
-            self.random_delay(*self.config.get("per_question_delay", (1.0, 3.0)))
+            self.random_delay(*config.get("per_question_delay", (1.0, 3.0)))
         except Exception as e:
-            import logging
             logging.error(f"填写排序题 {q_num} 时出错: {str(e)}")
-
-
-
-    # 调用方法示例（比如在auto_detect_question_type或fill_text内）：
-    # 假设你判断到是多项填空题型(q_type == "2")，这样调用：
-    # self.fill_multiple_text(driver, question, q_num)
 
     def bind_mousewheel_to_scrollbar(self, canvas):
         """将鼠标滚轮事件绑定到指定的画布上"""
